@@ -252,9 +252,31 @@ Identity Key (长期) → PreKey Bundle → Session Key → Message Key
 
 ### 8.4 防重放
 
-- Timestamp 检查：消息时间与当前时间差 > 5分钟 拒绝
-- Sequence 检查：序列号 <= 上次序列号 拒绝
-- Nonce 检查：Nonce 已使用过 拒绝
+#### 滑动窗口参数
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| 窗口大小 | 1000条 | 允许的序列号范围 |
+| 窗口起始 | CurrentSeq - 500 | 中心对齐 |
+| 窗口结束 | CurrentSeq + 500 | 中心对齐 |
+| Timestamp窗口 | ±5分钟 | 消息时间检查 |
+
+#### 防重放检查流程
+
+```
+接收消息(seq=N):
+1. 检查 N 是否在 [CurrentSeq-500, CurrentSeq+500] 范围内
+2. 检查 N 是否大于 lastProcessedSeq
+3. 检查 N 是否不在 usedNonces 集合中
+4. 三项全部通过 → 接受消息
+5. 任一项失败 → 拒绝消息
+```
+
+#### 窗口滑动规则
+
+当 lastProcessedSeq 更新时:
+- 清除 seq < lastProcessedSeq - 500 的 usedNonces
+- 保持 lastProcessedSeq - 500 到 lastProcessedSeq + 500 的状态
 
 ---
 

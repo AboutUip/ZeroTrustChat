@@ -66,14 +66,31 @@
 |:--------:|----------|
 | **传输安全** | TLS 1.3、证书固定、端到端加密、滑动窗口防重放 |
 | **存储安全** | 消息存MM2内存、.zdb加密、密钥存MM1可信区 |
-| **密钥安全** | 每消息独立密钥、24小时轮换、Level 3销毁 |
-| **认证安全** | 限流10次/分钟、封禁1小时、会话30分钟超时 |
+| **密钥安全** | 每消息独立密钥、6小时轮换、Level 3销毁 |
+| **认证安全** | 限流10次/分钟、动态封禁、会话30分钟超时 |
 
 ### 加密算法套件
 
 ```
-X25519 (密钥交换) + AES-256-GCM (消息加密) + Ed25519 (签名) + SHA-256 (哈希)
+X25519 (密钥交换) + AES-256-GCM (消息加密) + Ed25519 (签名) + SHA-3-256 (哈希)
 ```
+
+### 密钥轮换周期
+
+| 密钥类型 | 轮换周期 |
+|----------|----------|
+| Identity Key | 30天 |
+| Master Key | 6小时 |
+| Session Key | 1小时 |
+| Message Key | 每条消息 |
+
+### 安全增强
+
+安全增强规范已融入以下文档:
+- [01-MM1.md](docs/02-Core/01-MM1.md) - 侧信道防护、JNI安全强化、覆写轮数
+- [05-KeyRotate.md](docs/03-Business/05-KeyRotate.md) - 密钥分级轮换、后向保密
+- [02-Auth.md](docs/03-Business/02-Auth.md) - 动态封禁策略
+- [02-ZSP-Protocol.md](docs/01-Architecture/02-ZSP-Protocol.md) - 滑动窗口参数
 
 ---
 
@@ -139,7 +156,7 @@ ZerOS-Chat/
 
 | 文档 | 描述 |
 |------|------|
-| [01-MM1.md](docs/02-Core/01-MM1.md) | 安全内存框架 / 销毁机制 |
+| [01-MM1.md](docs/02-Core/01-MM1.md) | 安全内存框架 / 销毁机制 / 侧信道防护 / JNI安全 |
 | [05-KeyRotate.md](docs/03-Business/05-KeyRotate.md) | 密钥刷新 |
 | [07-CertPinning.md](docs/04-Features/07-CertPinning.md) | 证书固定 |
 | [02-Auth.md](docs/03-Business/02-Auth.md) | 认证安全 |
