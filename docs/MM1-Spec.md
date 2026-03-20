@@ -1,0 +1,206 @@
+# MM1 安全内存模型技术规范
+
+## 一、概述
+
+MM1 是 ZChatIM 系统的安全核心，负责所有敏感数据的内存存储与处理。由 C++ 实现，仅通过 JNI 与 Spring Boot 交互。
+
+**核心原则**：
+- 消息不持久化，断电即失
+- 宁可销毁不泄露
+- 消息分散存储 + 独立加密
+
+---
+
+## 二、架构
+
+```
+┌─────────────────┐     JNI      ┌─────────────────┐
+│  Spring Boot   │ ───────────> │      MM1        │
+│  (业务层)      │ <─────────── │   (C++ 核心)    │
+└─────────────────┘              └────────┬────────┘
+                                          │
+                         ┌────────────────┼────────────────┐
+                         │                │                │
+                         ▼                ▼                ▼
+                   ┌──────────┐    ┌──────────┐    ┌──────────┐
+                   │ 密钥管理  │    │ 会话管理  │    │ 消息存储  │
+                   │ (Keys)   │    │(Sessions)│    │ (Messages)│
+                   └──────────┘    └──────────┘    └──────────┘
+                                          │
+                         ┌────────────────┼────────────────┐
+                         │                │                │
+                         ▼                ▼                ▼
+                   ┌──────────┐    ┌──────────┐    ┌──────────┐
+                   │RandomAddr│    │AddressMap│    │  Shield  │
+                   │Allocator│    │ (索引)    │    │(防护层)  │
+                   └──────────┘    └──────────┘    └──────────┘
+```
+
+---
+
+## 三、核心组件
+
+### 3.1 Random Allocator
+
+每次分配随机地址，物理不连续。
+
+```cpp
+void* allocate(size_t size) {
+    size = align(size, 16);
+    size += random() % 4096;  // 随机填充
+    void* ptr = pool.alloc(size);
+    AllocationRecord rec = {ptr, size, timestamp};
+    records.push_back(rec);
+    return ptr;
+}
+```
+
+### 3.2 Address Mapper
+
+加密索引：MessageID → {Address, KeySalt}
+
+```cpp
+struct Mapper {
+    void* base_ptr;           // 随机基址
+    uint64_t salt;            // 随机盐值
+    unordered_map<uint64_t,   // Hash(MessageID)
+                     BlockRef> map;
+};
+```
+
+### 3.3 Key Manager
+
+双棘轮密钥链：
+```
+IdentityKey → SessionKey → MessageKey(每条消息独立)
+```
+
+### 3.4 Message Manager
+
+- 消息块独立加密
+- 链式哈希（可选）
+- 序列号排序
+
+---
+
+## 四、消息块结构
+
+```
+┌─────────────────────────────────────────────────┐
+│  BlockHead (16B) │ CryptoKey(32B) │ Content │Auth │
+│                  │                 │ (变长)  │(16B)│
+└─────────────────────────────────────────────────┘
+
+BlockHead:
+┌──────┬─────┬──────┬──────┬────────────┐
+│Magic(2)│Ver(1)│Flag(1)│Size(4)│IDHash(8)│
+└──────┴─────┴──────┴──────┴────────────┘
+
+Content (明文，加密存储):
+┌──────────┬──────────┬──────────┬──────────┬──────────┐
+│Sequence │Timestamp│ PrevHash │ SenderID │ Payload  │
+│  (8B)   │  (8B)   │  (32B)   │  (16B)   │ (变长)   │
+└──────────┴──────────┴──────────┴──────────┴──────────┘
+```
+
+---
+
+## 五、存储流程
+
+1. 生成/获取消息密钥
+2. 构造消息块 (Sequence + Timestamp + Payload)
+3. 随机地址分配
+4. 独立加密 (AES-256-GCM + 独立 Nonce)
+5. 写入内存
+6. 更新加密索引
+
+---
+
+## 六、安全机制
+
+### 6.1 防 Dump
+
+| 机制 | 说明 |
+|------|------|
+| 内存加密 | 存储时为密文 |
+| 随机地址 | 每次运行地址不同 |
+| 分散存储 | 消息物理不连续 |
+| 反调试 | 检测调试器，触发自毁 |
+
+### 6.2 自毁触发
+
+| 场景 | 动作 |
+|------|------|
+| 用户登出 | Level 2 擦除 |
+| 会话结束 | Level 2 擦除密钥 |
+| 检测调试 | Level 3 物理销毁 |
+| 收到异常信号 | Level 3 全量清零 |
+
+### 6.3 销毁级别
+
+| 级别 | 动作 |
+|------|------|
+| Level 1 | 标记释放 |
+| Level 2 | 覆写 0x00/随机数 |
+| Level 3 | mlock 锁定 + 多轮覆写 + 进程清零 |
+
+---
+
+## 七、JNI 接口
+
+### 消息
+
+| 接口 | 说明 |
+|------|------|
+| `storeMessage(sessionId, data)` | 存储消息，返回 msgId |
+| `retrieveMessage(msgId)` | 获取消息 |
+| `deleteMessage(msgId)` | 删除消息 |
+| `listMessages(userId, count)` | 获取最近消息 |
+
+### 密钥
+
+| 接口 | 说明 |
+|------|------|
+| `storeKey(userId, key)` | 存储密钥 |
+| `getKey(keyId)` | 获取密钥 |
+| `rotateKey(userId)` | 轮换密钥 |
+| `deleteKey(keyId)` | 删除密钥 |
+
+### 会话
+
+| 接口 | 说明 |
+|------|------|
+| `createSession(userA, userB)` | 创建会话 |
+| `getSession(sessionId)` | 获取会话 |
+| `destroySession(sessionId)` | 销毁会话 |
+
+### 安全
+
+| 接口 | 说明 |
+|------|------|
+| `emergencyWipe()` | 紧急全量销毁 |
+| `getStatus()` | 获取状态 |
+
+---
+
+## 八、数据类型
+
+| 类型 | 长度 |
+|------|------|
+| UserID | 16 bytes |
+| SessionID | 4 bytes |
+| MessageID | 16 bytes |
+| Nonce | 12 bytes |
+| Auth Tag | 16 bytes |
+| Key | 32 bytes |
+
+---
+
+## 九、容量估算
+
+| 项目 | 估算 |
+|------|------|
+| 100万在线用户 | ~80 MB |
+| 5000万消息缓存 | ~3 GB |
+| 密钥存储 | ~64 MB |
+| 总量 | ~4 GB |

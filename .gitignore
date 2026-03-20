@@ -1,0 +1,17 @@
+# ide文件
+.idea/
+.vscode/
+.vs/
+
+# 数据文件
+*.zdb
+
+# 日志文件
+*.log
+AgentArea/
+
+# 编译输出
+out/
+build/
+cmake-build-*/
+target/
