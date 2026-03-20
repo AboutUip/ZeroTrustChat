@@ -1,8 +1,10 @@
-# ZSP 协议技术规范文档
+# ZSP 协议技术规范
 
 ## 一、概述
 
 ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义网络协议，基于 TLV 结构设计，支持端到端加密、文件传输、音视频通话等 IM 特性。
+
+详见 [01-Overview.md](../01-Architecture/01-Overview.md)
 
 ---
 
@@ -10,8 +12,8 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 
 ```
 ┌─────────────┬─────────────┬─────────────┬─────────────┐
-│   Header   │    Meta     │   Payload   │  Auth Tag   │
-│  (16字节)   │   (变长)    │   (变长)    │   (16字节)  │
+│   Header    │    Meta     │   Payload   │  Auth Tag   │
+│  (16字节)    │   (变长)     │   (变长)    │   (16字节)   │
 └─────────────┴─────────────┴─────────────┴─────────────┘
 ```
 
@@ -50,7 +52,7 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 
 ```
 ┌───────────────┬───────────────┬───────────────┬───────────────┐
-│ MetaLength(2)│  Timestamp(8)│  Nonce(12)    │   KeyID(4)    │
+│ MetaLength(2) │  Timestamp(8) │  Nonce(12)    │   KeyID(4)    │
 └───────────────┴───────────────┴───────────────┴───────────────┘
 ```
 
@@ -84,8 +86,17 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 | 0x0F | GROUP_CREATE | 创建群组 |
 | 0x10 | GROUP_UPDATE | 群更新 |
 | 0x11 | GROUP_LEAVE | 退出群组 |
+| 0x14 | GROUP_MUTE | 群禁言 |
+| 0x15 | GROUP_REMOVE | 群踢人 |
+| 0x16 | GROUP_TRANSFER_OWNER | 群主转让 |
+| 0x17 | GROUP_JOIN_REQUEST | 入群申请 |
 | 0x12 | FRIEND_REQUEST | 好友请求 |
 | 0x13 | FRIEND_RESPONSE | 好友响应 |
+| 0x18 | DELETE_FRIEND | 删除好友 |
+| 0x19 | FRIEND_NOTE_UPDATE | 好友备注更新 |
+| 0x1A | RESUME_TRANSFER | 文件续传 |
+| 0x1B | CANCEL_TRANSFER | 取消传输 |
+| 0x1C | GROUP_NAME_UPDATE | 群名称修改 |
 | 0x80 | HEARTBEAT | 心跳 |
 | 0x81 | AUTH | 认证 |
 | 0x82 | LOGOUT | 登出 |
@@ -108,8 +119,8 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 
 ```
 ┌─────────┬─────────┬─────────┬─────────┬─────────┬─────────┐
-│FileID(16)│ThumbLen│ Thumb   │ URLLen  │  URL   │Duration│
-│          │  (2)   │(变长)   │  (2)    │(变长)  │  (4)   │
+│FileID(16)│ThumbLen│ Thumb   │ URLLen  │  URL    │Duration │
+│         │  (2)    │(变长)    │  (2)    │(变长)    │  (4)    │
 └─────────┴─────────┴─────────┴─────────┴─────────┴─────────┘
 ```
 
@@ -119,8 +130,8 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 ┌─────────────────────────────────────────────────────────────────┐
 │ FileID(16)│FileNameLen│FileName│FileSize(8)│MimeTypeLen│MimeType│
 ├───────────┼───────────┼────────┼───────────┼───────────┼────────┤
-│ SHA256(32)│EncryptKey │Chunksz│TotChunks │TransMode │
-│           │   (32)    │ (4)   │   (4)    │   (1)    │
+│ SHA256(32)│EncryptKey │Chunksz │TotChunks  │TransMode  │        │
+│           │   (32)    │ (4)    │   (4)     │   (1)     │        │
 └───────────┴───────────┴────────┴───────────┴───────────┴────────┘
 ```
 
@@ -140,7 +151,7 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 ```
 ┌───────────────┬─────────────┬─────────────┐
 │  FileID(16)   │ ChunkIndex  │  ChunkData  │
-│               │    (4)      │   (变长)    │
+│               │    (4)      │   (变长)     │
 └───────────────┴─────────────┴─────────────┘
 ```
 
@@ -149,7 +160,7 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 ```
 ┌───────────────┬─────────────┬─────────────┐
 │  FileID(16)   │  SHA256(32) │ Status(1)   │
-└───────────────┴─────────────┘
+└───────────────┴─────────────┴─────────────┘
 ```
 
 | Status | 说明 |
@@ -171,8 +182,8 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 
 ```
 ┌───────────────┬─────────────┬─────────────┐
-│  SubType(1)  │ Duration(4)│  Data(变长) │
-│              │            │ (SDP/ICE)   │
+│  SubType(1)   │ Duration(4) │  Data(变长)  │
+│               │             │ (SDP/ICE)   │
 └───────────────┴─────────────┴─────────────┘
 ```
 
@@ -180,8 +191,8 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 
 ```
 ┌───────────────┬─────────────┬─────────────┬─────────────┐
-│ UserIDLen(2) │  UserID     │  TokenLen   │   Token     │
-│              │   (变长)    │    (2)      │   (变长)    │
+│ UserIDLen(2)  │  UserID     │  TokenLen   │   Token     │
+│               │   (变长)     │    (2)      │   (变长)     │
 └───────────────┴─────────────┴─────────────┴─────────────┘
 ```
 
@@ -194,7 +205,7 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 ```
 ┌────────┬───────────┬─────────────┐
 │ Type(1)│ Length(2) │   Value     │
-│        │           │   (变长)    │
+│        │           │   (变长)     │
 └────────┴───────────┴─────────────┘
 ```
 
@@ -209,6 +220,7 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 | 0x14 | ThreadID | 话题ID |
 | 0x15 | Mention | @提及 |
 | 0x16 | Forwarded | 转发消息 |
+| 0x20 | GroupName | 群名称 |
 
 ### 7.3 厂商扩展 (0x80-0xFF)
 
