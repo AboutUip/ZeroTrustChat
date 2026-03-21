@@ -28,38 +28,30 @@
 
 ## 架构一瞥
 
+</div>
+
 ```mermaid
-%%{init: {'theme': 'neutral', 'themeVariables': { 'fontSize': '14px'}}}%%
 flowchart LR
-    subgraph edge[" 终端 "]
+    subgraph edge["终端"]
         C1["ZSP 客户端"]
     end
-    subgraph gw[" 网关（不可信） "]
+    subgraph gw["网关不可信区"]
         S["Spring / Netty"]
     end
-    subgraph tcb[" 可信基 C++ "]
+    subgraph tcb["可信基 C++"]
         M1["MM1"]
         M2["MM2"]
     end
-    subgraph store[" 持久化 "]
-        Z[(".zdb 密文")]
-        Q[("SQLite 索引")]
+    subgraph persist["持久化"]
+        Z[".zdb 密文"]
+        Q["SQLite 索引"]
     end
     C1 <-->|ZSP| S
     S <-->|JNI| M1
     M1 --> M2
     M2 --> Z
     M2 --> Q
-
-    classDef gwStyle fill:#fff7ed,stroke:#ea580c,stroke-width:1px
-    classDef tcbStyle fill:#eff6ff,stroke:#2563eb,stroke-width:1px
-    classDef storeStyle fill:#f0fdf4,stroke:#16a34a,stroke-width:1px
-    class S gwStyle
-    class M1,M2 tcbStyle
-    class Z,Q storeStyle
 ```
-
-</div>
 
 > [!IMPORTANT]
 > 图为**逻辑边界**；进程划分与部署以 **[系统总览](docs/01-Architecture/01-Overview.md)** 为准。
