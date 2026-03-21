@@ -7,7 +7,7 @@
 #include "storage/SqliteMetadataDb.h"
 #include "storage/BlockIndex.h"
 #include "storage/StorageIntegrityManager.h"
-#include "MessageQueryManager.h"
+#include "storage/MessageQueryManager.h"
 #include <atomic>
 #include <string>
 #include <vector>

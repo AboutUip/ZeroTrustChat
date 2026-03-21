@@ -1,6 +1,6 @@
 # ZChatIM 构建说明
 
-本文档描述 **`ZChatIM/`** 目录下 C++ 组件的构建依赖与平台差异。实现以 **`ZChatIM/CMakeLists.txt`** 为准。
+本文档描述 **`ZChatIM/`** 目录下 C++ 组件的构建依赖与平台差异。实现以 **`ZChatIM/CMakeLists.txt`** 为准。**`ZChatIMCore` 显式源文件列表、`sqlite3` 独立目标、链接关系**与 **`ZCHATIM_BUILD_*`** 默认值以该文件为准；**活文档对照**见 **`docs/02-Core/05-ZChatIM-Implementation-Status.md` 第1节**。
 
 ## 1. 工具链
 
@@ -68,19 +68,21 @@ cd ZChatIM && cmake -B build && cmake --build build --config Release
 
 默认 **`ZCHATIM_BUILD_JNI=ON`**。若本机无 JDK / **`JAVA_HOME`**，可 **` -DZCHATIM_BUILD_JNI=OFF`** 关闭 JNI 共享库目标。
 
-## 6.1 控制台 EXE 与树内测试
+## 7. 控制台 EXE 与树内测试
 
-默认 **`ZCHATIM_BUILD_EXE=ON`**、**`ZCHATIM_BUILD_TESTS=ON`**：`ZChatIM` 会编译 **`tests/mm1_managers_test.cpp`**、**`tests/mm2_fifty_scenarios_test.cpp`**，并支持 **`--test` / `--test-minimal` / `--test-mm250`**。
+**`ZCHATIM_BUILD_EXE=OFF`** 时不生成 **`ZChatIM`** 可执行目标。
 
-若**不提交**或**删除**上述测试源、或只想编最小控制台 EXE，可关闭树内测试（**仅 `main.cpp`**，构建不再依赖 **`tests/*.cpp`**）：
+默认 **`ZCHATIM_BUILD_EXE=ON`**、**`ZCHATIM_BUILD_TESTS=OFF`**：**`ZChatIM.exe`** 仅 **`main.cpp`**，**不依赖** **`tests/*.cpp`**（与 **`.gitignore` 忽略 `ZChatIM/tests/`** 的提交策略一致）。运行 **`--test*` / `--test-common`** 会打印未编入测试的提示并以**非零退出码**结束（当前 **`main` 映射为 1**）；**无法识别的 `--test…` 参数**仍为退出码 **2**。
+
+**本地自测**（须本机存在 **`ZChatIM/tests/*.cpp`**）：
 
 ```bash
-cmake -B build -DZCHATIM_BUILD_TESTS=OFF
+cmake -B build -DZCHATIM_BUILD_TESTS=ON
 cmake --build build --config Release
 ```
 
-此时运行 **`--test*`** 会打印提示并以退出码 **2** 结束。
+**`ON`** 时追加编译 **`tests/common_tools_test.cpp`**、**`tests/mm1_managers_test.cpp`**、**`tests/mm2_fifty_scenarios_test.cpp`**，并支持 **`--test`**、**`--test-common`**、**`--test-minimal`**、**`--test-mm250`**（**`--test-common`** 仅 **`common/`** + **`Logger`**；**`--test`** / **`--test-minimal`** 会先跑同一套 **`RunCommonToolsTests()`** 再跑场景）。
 
-## 7. 运行期说明（Windows）
+## 8. 运行期说明（Windows）
 
 当前 **ZChatIMCore** 在 Windows **不**链接 OpenSSL 动态库；无需部署 **`libcrypto*.dll`**。若后续变更链接关系，需在发行说明中单独列出 DLL 搜索路径要求。

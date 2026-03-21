@@ -40,7 +40,7 @@ namespace ZChatIM
             // 计算两个时间戳的差值（毫秒）
             static int64_t CalculateDuration(uint64_t start, uint64_t end);
             
-            // 计算两个时间戳的差值（秒）
+            // 计算两个时间戳的差值（秒）；**start/end 须与 `GetCurrentTimestamp()` 同为毫秒**，结果为毫秒差整除 1000
             static int64_t CalculateDurationSeconds(uint64_t start, uint64_t end);
             
             // =============================================================
@@ -50,10 +50,10 @@ namespace ZChatIM
             // 检查是否过期（毫秒）
             static bool IsExpired(uint64_t timestamp, uint64_t durationMs);
             
-            // 检查是否过期（秒）
+            // 检查是否过期（秒）；`timestamp` 与 **`GetCurrentTimestampSeconds()`** 同为**秒**（与 `IsExpired` 的毫秒不同）
             static bool IsExpiredSeconds(uint64_t timestamp, uint64_t durationSeconds);
             
-            // 检查是否过期（天）
+            // 检查是否过期（天）；`timestamp` 与 **`GetCurrentTimestampSeconds()`** 同为**秒**；`days` 过大导致秒数无法放入 **uint64_t** 时返回 **false**（视为未过期）
             static bool IsExpiredDays(uint64_t timestamp, uint64_t days);
             
             // =============================================================

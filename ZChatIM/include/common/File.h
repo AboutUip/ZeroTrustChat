@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <system_error>
 
 namespace ZChatIM
 {
@@ -62,8 +63,8 @@ namespace ZChatIM
             // 删除目录（递归）
             static bool DeleteDirectoryRecursive(const std::string& path);
             
-            // 列出目录内容
-            static std::vector<std::string> ListDirectory(const std::string& path);
+            // 列出目录项（仅文件名）。**成功**时返回 **true** 且 **ec** 清零（**out 可为空**＝空目录）；**打开或遍历失败**时返回 **false** 且 **ec** 非零。
+            static bool ListDirectory(const std::string& path, std::vector<std::string>& out, std::error_code& ec);
             
             // =============================================================
             // 路径操作

@@ -102,7 +102,7 @@ type: profile(头像), friend_list, settings
 SpringBoot: 无直接访问权限
 ```
 
-**说明**：元数据索引的**实现**位于 `ZChatIM` 的 **MM2**（如 `mm2::SqliteMetadataDb`）；与「仅 C++ 可访问」的边界表述一致，并不表示源码目录名必须是 `mm1`。
+**说明**：元数据索引的**实现**位于 `ZChatIM` 的 **MM2**（如 **`ZChatIM::mm2::SqliteMetadataDb`**）；与「仅 C++ 可访问」的边界表述一致，并不表示源码目录名必须是 `mm1`。
 
 ### 4.2 加密
 

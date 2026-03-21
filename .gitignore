@@ -16,7 +16,7 @@ ZChatIM/docs/*
 Client/*
 !Client/README.md
 
-# 测试数据/临时目录（仅仓库根下 tests/；勿用 tests/ 通配，否则会忽略 ZChatIM/tests/）
+# ZChatIM 树内 C++ 测试源码不入库（提交/默认 CMake 不编测试）；本地自测请自备 tests/ 并 -DZCHATIM_BUILD_TESTS=ON
 ZChatServer/src/test/
 ZChatIM/tests/
 

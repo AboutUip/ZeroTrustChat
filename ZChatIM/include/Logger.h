@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 #include <cstdarg>
 
@@ -18,7 +19,7 @@ namespace ZChatIM
     };
     
     // =============================================================
-    // 日志类
+    // 日志类（**多线程**：`Log*` 与 `SetLogFile` / `CloseLogFile` 互斥；级别过滤用原子读）
     // =============================================================
     
     class Logger {
@@ -57,8 +58,8 @@ namespace ZChatIM
         void Log(LogLevel level, const char* format, va_list args);
         
         // 成员变量
-        LogLevel m_logLevel;    // 当前日志级别
-        FILE* m_logFile;        // 日志文件句柄
+        std::atomic<LogLevel> m_logLevel; // 当前日志级别（与 `SetLogLevel` 无锁竞争）
+        FILE* m_logFile;                  // 日志文件句柄（与输出共 `g_logMutex`）
     };
     
     // =============================================================

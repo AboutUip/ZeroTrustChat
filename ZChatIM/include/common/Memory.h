@@ -11,20 +11,23 @@ namespace ZChatIM
         // =============================================================
         // 内存工具类
         // =============================================================
-        
+        //
+        // **线程安全**：`Allocate` / `Free` / `Reallocate` 及统计 API 使用 **原子** 更新；
+        // 与 `malloc` 一致，**同一块内存** 不应跨线程并发 `Free`/`Reallocate`（由调用方保证）。
+        //
         class Memory {
         public:
             // =============================================================
             // 内存分配/释放
             // =============================================================
             
-            // 分配内存
+            // 分配内存（**`size` 过大导致 `size+sizeof(size_t)` 溢出** 时返回 **nullptr**）
             static void* Allocate(size_t size);
             
             // 释放内存
             static void Free(void* ptr);
             
-            // 重新分配内存
+            // 重新分配内存（**`newSize` 过大导致与头部长度相加溢出** 时返回 **nullptr**，原块保留）
             static void* Reallocate(void* ptr, size_t newSize);
             
             // =============================================================
@@ -53,7 +56,7 @@ namespace ZChatIM
             // 解锁内存
             static bool UnlockMemory(void* ptr, size_t length);
             
-            // 设置内存保护
+            // 设置内存保护（Windows：`VirtualProtect`；**0**=只读 **PAGE_READONLY**，**1**=不可访问 **PAGE_NOACCESS**，其它=读写 **PAGE_READWRITE**；非 Windows：暂返回 **false**）
             static bool ProtectMemory(void* ptr, size_t length, int protection);
             
             // =============================================================
@@ -63,7 +66,7 @@ namespace ZChatIM
             // 检查内存是否可访问
             static bool IsMemoryAccessible(const void* ptr, size_t length);
             
-            // 检查内存是否已初始化
+            // 是否已初始化：**当前实现**仅等价于 `ptr != nullptr`（无法检测内容是否已写入）
             static bool IsMemoryInitialized(const void* ptr, size_t length);
             
             // 检查内存是否为零
@@ -73,10 +76,10 @@ namespace ZChatIM
             // 内存统计
             // =============================================================
             
-            // 获取已分配内存大小
+            // 获取已分配内存大小（**仅**统计 **`Allocate` / `Free` / `Reallocate`** 带内嵌长度头的路径；**不含** **`AllocateAligned`**）
             static size_t GetAllocatedSize();
             
-            // 获取峰值内存使用
+            // 获取峰值内存使用（同上统计口径）
             static size_t GetPeakMemoryUsage();
             
             // 重置内存统计
@@ -109,10 +112,6 @@ namespace ZChatIM
             // 禁止实例化
             Memory() = delete;
             ~Memory() = delete;
-            
-            // 内存统计
-            static size_t s_allocatedSize;
-            static size_t s_peakMemoryUsage;
         };
         
         // =============================================================

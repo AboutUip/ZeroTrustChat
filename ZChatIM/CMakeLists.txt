@@ -12,9 +12,9 @@ project(ZChatIM VERSION 1.0.0 LANGUAGES CXX C)
 # =========================
 option(ZCHATIM_BUILD_JNI "Build JNI shared library" ON)
 option(ZCHATIM_BUILD_EXE "Build console executable" ON)
-# Default ON: compile tests/mm1_managers_test.cpp + tests/mm2_fifty_scenarios_test.cpp into ZChatIM.exe (--test* 可用).
-# OFF: only main.cpp (no dependency on tests/*.cpp); --test* prints a hint and exits 2.
-option(ZCHATIM_BUILD_TESTS "Compile in-tree tests into ZChatIM.exe" ON)
+# Default OFF: 仓库默认不提交 tests/，发行/提交构建仅 main.cpp；--test* 运行会提示未编入测试。
+# 本地自测：cmake -DZCHATIM_BUILD_TESTS=ON（须存在 ZChatIM/tests/*.cpp）。
+option(ZCHATIM_BUILD_TESTS "Compile in-tree tests into ZChatIM.exe" OFF)
 
 # 密码学后端（与 Crypto.cpp 一致）：
 # - Windows：BCrypt + CryptoAPI（AES-GCM / PBKDF2 / RNG；Auth 会话随机）— **不需要** OpenSSL。
@@ -88,6 +88,13 @@ endif()
 # 核心静态库（MM1 管理等实现）
 # =========================
 add_library(ZChatIMCore STATIC
+    src/common/Utils.cpp
+    src/common/Memory.cpp
+    src/common/String.cpp
+    src/common/File.cpp
+    src/common/Time.cpp
+    src/common/Random.cpp
+    src/common/Logger.cpp
     src/mm1/MM1.cpp
     src/mm1/MM1_security_submodules.cpp
     src/mm1/managers/AuthSessionManager.cpp
@@ -167,6 +174,7 @@ if(ZCHATIM_BUILD_EXE)
     set(_zchatim_exe_sources main.cpp)
     if(ZCHATIM_BUILD_TESTS)
         list(APPEND _zchatim_exe_sources
+            tests/common_tools_test.cpp
             tests/mm1_managers_test.cpp
             tests/mm2_fifty_scenarios_test.cpp
         )

@@ -11,7 +11,10 @@ namespace ZChatIM
         // =============================================================
         // 随机数生成器
         // =============================================================
-        
+        //
+        // **线程安全**：全部静态 API 可多线程并发调用。OS CSPRNG（BCrypt / /dev/urandom）路径带内部同步；
+        // 回退的 **`mt19937`** 由互斥保护。初始化标志为原子 + 互斥，无数据竞争。
+        //
         class Random {
         public:
             // =============================================================
@@ -53,10 +56,10 @@ namespace ZChatIM
             // 生成会话ID (4字节)
             static std::vector<uint8_t> GenerateSessionId();
             
-            // 生成文件ID (8字符)
+            // 生成文件 ID（8 字符）；字母表上 **均匀分布**（OS CSPRNG + 拒绝采样，无取模偏差）
             static std::string GenerateFileId();
             
-            // 生成随机字符串
+            // 随机字符串（同上，**均匀**取自 62 字符字母表）
             static std::string GenerateRandomString(size_t length);
             
         private:
@@ -64,10 +67,8 @@ namespace ZChatIM
             Random() = delete;
             ~Random() = delete;
             
-            // 初始化随机数生成器
+            // 初始化随机数生成器（惰性；多线程安全）
             static void Init();
-            
-            static bool s_initialized; // 初始化标志
         };
         
     } // namespace common

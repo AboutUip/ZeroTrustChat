@@ -119,7 +119,7 @@ cmake --build build --config Release
 | **Windows** | MM2 使用 **BCrypt**，无需 OpenSSL |
 | **Linux / macOS** | 须 **OpenSSL 3.x**；缺失时 CMake 报错并提示修复 |
 | **VS 多配置** | 命令行加 **`--config Release`**（或 IDE 中选 Release） |
-| **树内测试** | 默认含 `tests/*.cpp`，支持 `--test` / `--test-minimal` / `--test-mm250`；仅编 `main` 时加 **`-DZCHATIM_BUILD_TESTS=OFF`** → [构建说明 第 6.1 节](docs/07-Engineering/01-Build-ZChatIM.md) |
+| **树内测试** | **默认不编**（**`ZCHATIM_BUILD_TESTS` 默认 `OFF`**，`tests/` 不入库）；本地自测：**`-DZCHATIM_BUILD_TESTS=ON`** 且自备 **`ZChatIM/tests/*.cpp`** → [构建说明 §7](docs/07-Engineering/01-Build-ZChatIM.md) |
 
 ---
 
