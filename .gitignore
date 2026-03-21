@@ -8,6 +8,7 @@
 
 # 日志文件
 *.log
+*.txt
 AgentArea/
 
 # 编译输出

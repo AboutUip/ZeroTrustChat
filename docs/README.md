@@ -58,9 +58,13 @@
 
 | 文档 | 说明 |
 |------|------|
-| [01-JNI](06-Appendix/01-JNI.md) | JNI接口清单 |
+| [01-JNI](06-Appendix/01-JNI.md) | JNI 接口清单（**`C++` 列**与 `JniInterface.h` / `JniBridge.h` 严格一一对应；业务 API 首参 **`callerSessionId`**，见表首说明） |
 | [02-Performance](06-Appendix/02-Performance.md) | 性能指标 |
 | [03-Version](06-Appendix/03-Version.md) | 版本兼容 |
+
+> **JNI 详细版（路由与安全不变量）**：见仓库内 [`ZChatIM/docs/JNI-API-Documentation.md`](../ZChatIM/docs/JNI-API-Documentation.md)，须与上表及头文件同步维护。
+
+**实现索引（C++）**：认证限流/封禁见 [`03-Business/02-Auth.md`](03-Business/02-Auth.md) §七；IM 会话 idle/`lastActive` 见 [`03-Business/04-Session.md`](03-Business/04-Session.md) §七。
 
 ## 快速索引
 

@@ -89,7 +89,7 @@
 
 | 接口 | 输入 | 输出 | 说明 |
 |------|------|------|------|
-| `auth` | userId, token | sessionId/false | 认证 |
+| `auth` | userId, token, clientIp(可选) | sessionId/false | 认证；IP 建议透传至 JNI 以满足 02-Auth |
 | `storeMessage` | sessionId, data | msgId/null | 存储消息 |
 | `retrieveMessage` | msgId | data/null | 获取消息 |
 | `getSessionStatus` | sessionId | active/invalid | 会话状态 |

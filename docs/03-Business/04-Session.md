@@ -53,3 +53,11 @@
 - 销毁级别: Level 2
 - 服务重启: 会话丢失
 - 无日志记录
+
+## 七、C++ 实现落点（`ZChatIM`）
+
+| 组件 | 路径 | 说明 |
+|------|------|------|
+| `SessionActivityManager` | `include/mm1/managers/SessionActivityManager.h`、`src/mm1/managers/SessionActivityManager.cpp` | 维护 **imSessionId（16 字节）** 的 `lastActive`（Unix 纪元毫秒）；**idle 30 分钟** 与 §二 一致；`TouchSession`/`CleanupExpiredSessions`/`IsSessionExpired` 对不可信 `nowMs` 相对本机时间做**钳制**（防止恶意超前时间延长 idle）；`GetSessionStatus` 使用本机当前 Unix 毫秒。 |
+
+> **与 ZSP**：此处 `imSessionId` 为 JNI/MM1 通道会话标识，**不是** ZSP Header 中 4 字节 `SessionID`（见 `Types.h` / `02-ZSP-Protocol.md`）。

@@ -1,246 +1,128 @@
-# <div align="center">ZChat</div>
-
 <div align="center">
 
-**内网安全即时通讯服务**
+# ZerOS-Chat · ZChatIM
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Platform](https://img.shields.io/badge/Platform-Windows-blue.svg)]()
-[![Security](https://img.shields.io/badge/Security-E2E%20Encryption-green.svg)]()
+### 面向 **极限内网安全** 的即时通讯
+
+**在可控专网 / 强隔离内网中，把密码学、密钥与会话、落盘机密收敛到最小可信基（C++ MM1/MM2）；Java 只做 ZSP 与编排，不持有安全态。**
+
+[![Security model](https://img.shields.io/badge/Security-Intranet--hardened-0f172a?style=flat-square&labelColor=334155)](docs/01-Architecture/01-Overview.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=flat-square)](https://opensource.org/licenses/MIT)
+[![CMake](https://img.shields.io/badge/CMake-3.20%2B-064F8C?style=flat-square&logo=cmake)](https://cmake.org/)
+[![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat-square&logo=c%2B%2B)](https://en.cppreference.com/w/cpp/17)
+
+*规范与常量以 **`docs/`** 为唯一权威；本页突出**安全立场**与**阅读入口**。*
+
+<br/>
+
+```mermaid
+flowchart TB
+  subgraph perimeter["组织治理的网络边界"]
+    C(("终端 · 内网客户端"))
+  end
+  subgraph untrusted["不可信区 · 仅 I/O 与编排"]
+    S["Spring / Netty · ZSP<br/>不承载密钥与安全态"]
+  end
+  subgraph trusted["可信区 · ZChatIM（TCB）"]
+    M["MM1 安全内存 · 会话与认证策略<br/>MM2 加密存储 · .zdb / 索引"]
+  end
+  subgraph vault["机密落点"]
+    D[("加密数据区 · SQLite 元索引")]
+  end
+  C <-->|专网 ZSP| S
+  S <-->|JNI · 强边界校验| M
+  M --> D
+```
+
+<br/>
+
+[**📖 文档总目录**](docs/README.md) · [**架构总览**](docs/01-Architecture/01-Overview.md) · [**JNI 安全约定**](docs/06-Appendix/01-JNI.md) · [**JNI 实现说明**](ZChatIM/docs/JNI-API-Documentation.md)
 
 </div>
 
 ---
 
-## 简介
+## 极限内网安全：设计立场
 
-专为**高安全等级内网环境**设计的即时通讯系统，采用端到端加密架构，
-消息不在服务器持久化存储，断电即失，最大程度保障数据安全。
+本项目假设部署在 **由组织统一治理的内网或专网**（边界、准入、审计由基础设施承担），在此前提下把 **IM 自身的机密性 / 完整性 / 可用性对抗面** 压到最低：
 
-> **核心设计理念**: 数据在内存中流转，服务器重启后自动清除，实现"无痕通讯"
+| 原则 | 含义 | 深入阅读 |
+| :--- | :--- | :--- |
+| **可信基极小化** | 敏感逻辑只在 **C++ MM1/MM2**；Spring/Netty 为 **不可信区**，仅编解码 ZSP、路由与调度 JNI。 | [Overview](docs/01-Architecture/01-Overview.md)、[SpringBoot 职责](docs/03-Business/01-SpringBoot.md) |
+| **Java 不持密** | 业务侧 **不处理安全相关载荷**，尽量只持 **引用 ID**；密钥、会话策略、限流封禁等在 MM1。 | [01-SpringBoot.md §一](docs/03-Business/01-SpringBoot.md) |
+| **JNI 强边界** | 业务 native 首参 **`callerSessionId`**，与头文件及附录 **严格一一对应**，防止「任意会话代调」。 | [01-JNI.md](docs/06-Appendix/01-JNI.md)、[`JniSecurityPolicy.h`](ZChatIM/include/common/JniSecurityPolicy.h) |
+| **内存级安全** | MM1 安全内存框架、**多级安全销毁**（异常 / 登出 / 调试检测等路径）。 | [01-MM1.md](docs/02-Core/01-MM1.md) |
+| **加密落盘** | `.zdb` 随机噪声填充、随机写入位置 + 加密；SQLite 仅存索引与元数据。 | [03-Storage.md](docs/02-Core/03-Storage.md)、[02-MM2.md](docs/02-Core/02-MM2.md) |
+| **认证在可信区** | 认证限流、封禁矩阵、会话表等 **不得在 Java 自实现**，由 MM1 统一裁决（与 IP / 用户维度策略见文档）。 | [02-Auth.md](docs/03-Business/02-Auth.md) |
+| **密钥与周期** | Identity / Master / Session / Message 等轮换与职责拆分见业务规范（避免 README 与文档数字漂移）。 | [05-KeyRotate.md](docs/03-Business/05-KeyRotate.md)、[03-Group.md](docs/03-Business/03-Group.md) |
+| **通道与身份** | 内网仍可对 TLS / 证书固定等做纵深防御（按功能规范启用与运维）。 | [07-CertPinning.md](docs/04-Features/07-CertPinning.md) |
 
----
-
-## 核心特性
-
-### 数据不持久化
-> 消息仅存服务器内存，服务重启后自动清除
-
-### 端到端加密
-> 所有消息在客户端加密传输，服务器仅转发密文
-
-### 可信区隔离
-> 核心加密逻辑运行在 C++ 可信区，与业务层物理隔离
-
-### 多级销毁机制
-
-| 等级 | 方式 | 描述 |
-|:----:|------|------|
-| Level 1 | 标记释放 | 标记内存为可释放状态 |
-| Level 2 | 覆写 | 使用随机数据覆写内存 |
-| Level 3 | mlock + 多轮覆写 | 锁定内存并多轮覆写 |
-
-### 密钥动态刷新
-> 主密钥、会话密钥定期轮换，降低密钥泄露风险
+> **说明**：「极限内网」指在**已约束的网络与终端治理**下，将 **IM 软件栈内的 TCB 与数据面** 做到尽可能小、可审计；**不**等同于「仅靠内网物理隔离即可省略密码学」——规范中的加密、轮换与会话策略仍然成立。
 
 ---
 
-## 技术架构
+## 这个仓库里有什么？
 
-```
-客户端 ───▶ ZSP协议 ───▶ SpringBoot(Netty) ───▶ JNI ───▶ C++(MM1/MM2) ───▶ .zdb文件
-                                                    │
-                                    ┌───────────────┴───────────────┐
-                                    │     不可信区    │    可信区     │
-                                    │  • 协议解析     │  • MM1        │
-                                    │  • 消息路由     │  • MM2        │
-                                    │  • 业务调度     │  • .zdb文件   │
-                                    └───────────────┴───────────────┘
-```
+| | |
+| :--- | :--- |
+| **`docs/`** | 架构、ZSP、MM1/MM2、业务（Auth / Session / 密钥…）、功能、运维与附录。**威胁模型、状态机、阈值与接口表均以文档为准。** |
+| **`ZChatIM/`** | 上述规范的 **C++ 可信实现载体**：头文件契约、CMake、已落地管理器、`jni/` 与 native 侧 JNI 文档。 |
+
+Java / Spring Boot 工程**可独立于本仓库**；与 MM1 的调用契约见 **[`docs/03-Business/01-SpringBoot.md`](docs/03-Business/01-SpringBoot.md)**。
+
+**实现索引（C++ ↔ 文档）**：认证限流 / 封禁 → [`02-Auth.md`](docs/03-Business/02-Auth.md) **§七**；IM 会话 idle / `lastActive` → [`04-Session.md`](docs/03-Business/04-Session.md) **§七**。
 
 ---
 
-## 安全设计
-
-| 安全类别 | 防护措施 |
-|:--------:|----------|
-| **传输安全** | TLS 1.3、证书固定、端到端加密、滑动窗口防重放 |
-| **存储安全** | 消息存MM2内存、.zdb加密、密钥存MM1可信区 |
-| **密钥安全** | 每消息独立密钥、6小时轮换、Level 3销毁 |
-| **认证安全** | 限流10次/分钟、动态封禁、会话30分钟超时 |
-
-### 加密算法套件
-
-```
-X25519 (密钥交换) + AES-256-GCM (消息加密) + Ed25519 (签名) + SHA-3-256 (哈希)
-```
-
-### 密钥轮换周期
-
-| 密钥类型 | 轮换周期 |
-|----------|----------|
-| Identity Key | 30天 |
-| Master Key | 6小时 |
-| Session Key | 1小时 |
-| Message Key | 每条消息 |
-
-### 安全增强
-
-安全增强规范已融入以下文档:
-- [01-MM1.md](docs/02-Core/01-MM1.md) - 侧信道防护、JNI安全强化、覆写轮数
-- [05-KeyRotate.md](docs/03-Business/05-KeyRotate.md) - 密钥分级轮换、后向保密
-- [02-Auth.md](docs/03-Business/02-Auth.md) - 动态封禁策略
-- [02-ZSP-Protocol.md](docs/01-Architecture/02-ZSP-Protocol.md) - 滑动窗口参数
-
----
-
-## 技术栈
+## 文档从哪读？
 
 <div align="center">
 
-| 层级 | 技术 | 说明 |
-|:----:|------|------|
-| 后端 | SpringBoot + Netty | 高性能网络通信 |
-| 安全层 | C++ (JNI) | 可信执行环境 |
-| 存储 | SQLite + .zdb | 安全可靠存储 |
-| 协议 | ZSP | 自定义二进制协议 |
+| 第一步 | 链接 |
+| :--: | :-- |
+| **按目录浏览全部规范** | **[`docs/README.md`](docs/README.md)** |
+| **系统总览与数据分类** | [`docs/01-Architecture/01-Overview.md`](docs/01-Architecture/01-Overview.md) |
+| **ZSP 协议** | [`docs/01-Architecture/02-ZSP-Protocol.md`](docs/01-Architecture/02-ZSP-Protocol.md) |
+| **MM1 / MM2 / 存储** | [`docs/02-Core/`](docs/02-Core/) |
 
 </div>
 
 ---
 
-## 目录结构
+## `ZChatIM/` 目录速览
 
 ```
 ZerOS-Chat/
-│
-├── README.md
-│
-├── docs/                       技术规范文档
-│   ├── 01-Architecture/         架构文档
-│   │   ├── 01-Overview.md      • 系统架构总览
-│   │   └── 02-ZSP-Protocol.md  • ZSP协议规范
-│   ├── 02-Core/                核心模块
-│   │   └── 01-MM1.md           • 安全内存框架
-│   ├── 03-Business/             业务模块
-│   │   ├── 02-Auth.md           • 认证安全
-│   │   ├── 03-Group.md          • 群组密钥
-│   │   └── 05-KeyRotate.md      • 密钥刷新
-│   ├── 04-Features/             功能规范
-│   │   ├── 01-MessageSync.md    • 消息同步
-│   │   ├── 02-MessageRecall.md  • 消息撤回
-│   │   ├── 05-FriendVerify.md   • 好友验证
-│   │   ├── 07-CertPinning.md    • 证书固定
-│   │   ├── 09-MessageEdit.md    • 消息编辑
-│   │   ├── 10-MessageReply.md   • 消息回复
-│   │   └── 11-GroupMute.md      • 群禁言
-│   ├── 05-Operations/           运维文档
-│   └── 06-Appendix/             附录
-│       ├── 01-JNI.md            • JNI接口清单
-│       └── 02-Performance.md   • 性能指标
-│
-└── ZChatIM/                    C++安全模块
+├── docs/                          ← 规范（权威）
+└── ZChatIM/
+    ├── CMakeLists.txt             ← ZChatIMCore / 可选 EXE / ZChatIMJNI
+    ├── include/                   ← MM1 · MM2 · JNI · 安全策略头文件
+    ├── src/mm1/managers/          ← 已接入 CMake 的管理器实现
+    ├── jni/                       ← JNI_OnLoad、native 入口
+    ├── main.cpp
+    └── docs/JNI-API-Documentation.md
 ```
 
 ---
 
-## 文档导航
+## 构建 ZChatIM
 
-### 入门指南
-
-| 文档 | 描述 |
-|------|------|
-| [docs/README.md](docs/README.md) | 技术规范文档索引 |
-
-### 安全机制
-
-| 文档 | 描述 |
-|------|------|
-| [01-MM1.md](docs/02-Core/01-MM1.md) | 安全内存框架 / 销毁机制 / 侧信道防护 / JNI安全 |
-| [05-KeyRotate.md](docs/03-Business/05-KeyRotate.md) | 密钥刷新 |
-| [07-CertPinning.md](docs/04-Features/07-CertPinning.md) | 证书固定 |
-| [02-Auth.md](docs/03-Business/02-Auth.md) | 认证安全 |
-
-### 核心架构
-
-| 文档 | 描述 |
-|------|------|
-| [01-Overview.md](docs/01-Architecture/01-Overview.md) | 系统架构总览 |
-| [02-ZSP-Protocol.md](docs/01-Architecture/02-ZSP-Protocol.md) | ZSP协议规范 |
-
-### 消息功能
-
-| 文档 | 描述 |
-|------|------|
-| [01-MessageSync.md](docs/04-Features/01-MessageSync.md) | 消息同步 |
-| [02-MessageRecall.md](docs/04-Features/02-MessageRecall.md) | 消息撤回 |
-| [09-MessageEdit.md](docs/04-Features/09-MessageEdit.md) | 消息编辑 |
-| [10-MessageReply.md](docs/04-Features/10-MessageReply.md) | 消息回复 |
-
-### 好友与群组
-
-| 文档 | 描述 |
-|------|------|
-| [05-FriendVerify.md](docs/04-Features/05-FriendVerify.md) | 好友验证 |
-| [03-Group.md](docs/03-Business/03-Group.md) | 群组密钥 |
-| [11-GroupMute.md](docs/04-Features/11-GroupMute.md) | 群禁言 |
-
-### 附录
-
-| 文档 | 描述 |
-|------|------|
-| [01-JNI.md](docs/06-Appendix/01-JNI.md) | JNI接口清单 |
-| [02-Performance.md](docs/06-Appendix/02-Performance.md) | 性能指标 |
-
----
-
-## 快速开始
-
-### 环境要求
-
-| 依赖 | 版本 |
-|:----:|-----:|
-| CMake | 3.20+ |
-| JDK | 17+ |
-| Maven | 3.8+ |
-
-### 编译步骤
+| 项 | 说明 |
+| :--- | :--- |
+| 工具链 | **CMake ≥ 3.20**，**C++17** |
+| Windows | 自动链接 **bcrypt**（见 `CMakeLists.txt`） |
+| JNI | 需要 **JDK** / **`JAVA_HOME`**；无 JDK 时可 `-DZCHATIM_BUILD_JNI=OFF` |
 
 ```bash
-# 1. 进入C++模块目录
 cd ZChatIM
-
-# 2. 创建并进入构建目录
-mkdir build && cd build
-
-# 3. 配置CMake
-cmake ..
-
-# 4. 编译项目
-cmake --build .
+cmake -B build -DZCHATIM_BUILD_JNI=OFF
+cmake --build build --config Release
 ```
 
----
-
-## 限制声明
-
-<div align="center">
-
-| 限制项 | 说明 |
-|:------:|------|
-| **适用环境** | 仅限内网环境，不适用于公网部署 |
-| **安全假设** | 所有安全机制都基于内网可信环境 |
-
-</div>
+更多 CMake 选项见 **`ZChatIM/CMakeLists.txt`**。
 
 ---
 
 ## 许可证
 
-<div align="center">
-
-Copyright © 2026 **AboutUip**
-
-[![MIT License](https://img.shields.io/badge/License-MIT-brightgreen.svg)](https://opensource.org/licenses/MIT)
-
-</div>
+Copyright © 2026 **AboutUip** · [MIT License](https://opensource.org/licenses/MIT)
