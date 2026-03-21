@@ -5,6 +5,10 @@
 
 # 数据文件
 *.zdb
+.mvn/
+
+# 测试数据/临时目录（仅仓库根下 tests/；勿用 tests/ 通配，否则会忽略 ZChatIM/tests/）
+tests/
 
 # 日志文件
 *.log

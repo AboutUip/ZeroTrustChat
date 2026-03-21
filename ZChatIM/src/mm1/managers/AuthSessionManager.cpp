@@ -2,6 +2,7 @@
 #include "Types.h"
 
 #include <array>
+#include <ctime>
 #include <chrono>
 #include <cstring>
 #include <deque>
@@ -15,6 +16,9 @@
 #endif
 
 #if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -299,11 +303,24 @@ namespace ZChatIM::mm1 {
         }
 
         if (impl_->sessions.size() >= kMaxActiveSessions) {
+            // Credential already passed; do not consume rate-limit slots for server capacity issues.
+            if (!userQ.empty()) {
+                userQ.pop_back();
+            }
+            if (ipQPtr != nullptr && !ipQPtr->empty()) {
+                ipQPtr->pop_back();
+            }
             return {};
         }
 
         std::vector<uint8_t> sid;
         if (!GenerateUniqueSessionId(impl_->sessions, sid)) {
+            if (!userQ.empty()) {
+                userQ.pop_back();
+            }
+            if (ipQPtr != nullptr && !ipQPtr->empty()) {
+                ipQPtr->pop_back();
+            }
             return {};
         }
 

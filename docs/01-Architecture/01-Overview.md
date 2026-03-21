@@ -32,8 +32,8 @@
 | 模块 | 说明 | 详见 |
 |------|------|------|
 | MM1 | 安全内存框架 | [01-MM1.md](../02-Core/01-MM1.md) |
-| MM2 | 消息加密存储 | [01-MM1.md](../02-Core/01-MM1.md) |
-| 密钥管理 | 密钥生命周期 | [03-Group.md](../03-Business/03-Group.md) |
+| MM2 | 消息加密存储 | [02-MM2.md](../02-Core/02-MM2.md) |
+| 密钥管理 | 密钥生命周期 | [05-KeyRotate.md](../03-Business/05-KeyRotate.md)、[03-Group.md](../03-Business/03-Group.md) |
 | .zdb存储 | 加密文件存储 | [03-Storage.md](../02-Core/03-Storage.md) |
 | 安全销毁 | 三级销毁机制 | [01-MM1.md](../02-Core/01-MM1.md) |
 
@@ -76,9 +76,11 @@
 | 群组信息 | .zdb | 不过期 | MM1索引 + .zdb |
 | 聊天消息 | 内存 | 7天 | MM1索引 + MM2 |
 | 文件数据 | 内存 | 7天 | MM1索引 + MM2 |
-| 会话密钥 | 内存 | 24小时 | MM1 |
+| 会话密钥（Session Key，密码学） | 内存 | **1小时**（轮换周期） | MM1 |
 
-详见 [01-MessageSync.md](../04-Features/01-MessageSync.md)
+> **与 IM 通道**：上表为 **Session Key 轮换/存活策略**（与 [05-KeyRotate.md](../03-Business/05-KeyRotate.md) §1.1 一致）。**JNI/MM1 通道** 的 `imSessionId` **idle 30 分钟** 见 [04-Session.md](../03-Business/04-Session.md)，与 Session Key 周期是不同维度。
+
+详见 [01-MessageSync.md](../04-Features/01-MessageSync.md)、[05-KeyRotate.md](../03-Business/05-KeyRotate.md)
 
 ---
 
@@ -96,11 +98,7 @@
 
 ### 密钥刷新
 
-| 周期 | 密钥类型 |
-|------|----------|
-| 24小时 | Master Key, Group Key, 用户密钥 |
-
-详见 [03-Group.md](../03-Business/03-Group.md)
+**权威**：[05-KeyRotate.md](../03-Business/05-KeyRotate.md)（分级周期、双密钥并行、旧密钥保留 1 小时）。**总览摘要**见本文 **§九**；群组密钥等业务见 [03-Group.md](../03-Business/03-Group.md)。
 
 ---
 
@@ -147,11 +145,21 @@
 
 ## 九、密钥刷新
 
-| 项目 | 规则 |
-|------|------|
-| 周期 | 24小时 |
-| 机制 | 双密钥并行 |
-| 旧密钥保留 | 24小时 |
+与 [05-KeyRotate.md](../03-Business/05-KeyRotate.md) **§1.1** 对齐（**以下表为总览，细节与验收以该文档为准**）：
+
+| 密钥类型 | 轮换周期 |
+|----------|:--------:|
+| Identity Key | 24小时 |
+| Master Key | 6小时 |
+| Session Key | 1小时 |
+| Message Key | 每条消息 |
+
+| 机制项 | 规则 |
+|--------|------|
+| 双密钥并行 | 刷新后新旧密钥同时生效（见 05-KeyRotate §二） |
+| 旧密钥保留 | **1小时**（非 24 小时） |
+
+群组密钥等：**[03-Group.md](../03-Business/03-Group.md)**。
 
 详见 [05-KeyRotate.md](../03-Business/05-KeyRotate.md)
 

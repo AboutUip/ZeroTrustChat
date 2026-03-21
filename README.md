@@ -100,6 +100,7 @@ ZerOS-Chat/
     ├── src/mm1/managers/          ← 已接入 CMake 的管理器实现
     ├── jni/                       ← JNI_OnLoad、native 入口
     ├── main.cpp
+    ├── tests/                     ← MM1 自检（main --test，无第三方测试库）
     └── docs/JNI-API-Documentation.md
 ```
 
@@ -112,11 +113,13 @@ ZerOS-Chat/
 | 工具链 | **CMake ≥ 3.20**，**C++17** |
 | Windows | 自动链接 **bcrypt**（见 `CMakeLists.txt`） |
 | JNI | 需要 **JDK** / **`JAVA_HOME`**；无 JDK 时可 `-DZCHATIM_BUILD_JNI=OFF` |
+| 自检 | 生成 **`ZChatIM`** 可执行文件后执行 **`ZChatIM --test`**（无第三方测试库）；见 [`ZChatIM/tests/README.md`](ZChatIM/tests/README.md) |
 
 ```bash
 cd ZChatIM
 cmake -B build -DZCHATIM_BUILD_JNI=OFF
 cmake --build build --config Release
+# 运行 MM1 自检：./build/bin/ZChatIM --test（路径以生成目录为准）
 ```
 
 更多 CMake 选项见 **`ZChatIM/CMakeLists.txt`**。

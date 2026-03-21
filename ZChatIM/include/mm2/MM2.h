@@ -215,6 +215,8 @@ namespace ZChatIM
             // 存储完整性校验（SQLite）
             // =============================================================
             // Compute / Record / Verify data_blocks.sha256（契约层接口）
+            // 注意：dataId 与 SQLite `data_blocks.data_id` 对齐时，std::string 须承载 **16 字节原始二进制**
+            //（`MESSAGE_ID_SIZE`），而非十六进制文本；实现层应委托 `GetStorageIntegrityManager()` 并做编码一致转换。
             bool RecordDataBlockHash(
                 const std::string& dataId,
                 uint32_t chunkIndex,

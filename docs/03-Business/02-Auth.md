@@ -96,4 +96,4 @@ IP级别: 5次/分钟
 |------|------|------|
 | `AuthSessionManager` | `include/mm1/managers/AuthSessionManager.h`、`src/mm1/managers/AuthSessionManager.cpp` | 会话表；**用户 10 次/分钟**、**IP 5 次/分钟**（仅当 `Auth` 传入非空 `clientIp`）；封禁键为 `userId` 或 `userId‖clientIp`；失败计数窗口 **24h**，封禁时长按 **§2.2 矩阵**；成功清空对应限流队列与封禁项；`VerifySession`/`DestroySession` 移除会话项时对 `userId` 字段做内存清零（Level 2 语义的一部分）。凭证校验 `VerifyCredential` 仍为占位，上线前须替换。 |
 
-**限流计数语义**：每次进入 `Auth` 且在通过封禁检查后、凭证校验前记入 1 分钟滑动窗口；**含**后续凭证失败（与「每分钟尝试次数」一致）。
+**限流计数语义**：每次进入 `Auth` 且在通过封禁检查后、凭证校验前记入 1 分钟滑动窗口；**含**后续凭证失败（与「每分钟尝试次数」一致）。**例外**：凭证**已通过**但仅因**会话表满**或 **sessionId 随机数生成失败**而拒绝时，会撤销当次已入队的限流计数，避免误伤合法用户（不属于「认证失败」语义）。

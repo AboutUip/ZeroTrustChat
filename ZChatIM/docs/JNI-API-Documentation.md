@@ -325,10 +325,10 @@
 3. 为 `RecallMessage/DeleteMessage`、`Mention`、`FriendVerify`、`StoreMessageReplyRelation` 建立“签名错误时必须失败”的测试矩阵。
 
 ### 3.2 阶段二：StorageIntegrity + SQLite 完整性校验闭环
-1. 实现 `StorageIntegrityManager::ComputeSha256/RecordDataBlockHash/VerifyDataBlockHash`。
-2. 在 `MM2::StoreFileChunk` 写入成功后调用 `RecordDataBlockHash`。
+1. 实现 `StorageIntegrityManager::ComputeSha256/RecordDataBlockHash/VerifyDataBlockHash`（底层已落至 **`mm2::SqliteMetadataDb`**：`UpsertDataBlock` / `GetDataBlock`；详见仓库根目录 **`docs/02-Core/03-Storage.md`** §七）。
+2. 在 `MM2::StoreFileChunk` 写入成功后调用 `RecordDataBlockHash`（需先 `Bind` 元数据库并完成 `UpsertZdbFile` 等外键前提）。
 3. 在 `MM2::GetFileChunk` 读取成功后调用 `VerifyDataBlockHash`，并对 outMatch=false 的策略进行明确化（返回失败或标记失效）。
-4. 在 `BlockIndex` 内完成 SQLite 表创建、事务、以及 dataId+chunkIndex 的 sha256 查询/校验逻辑。
+4. **`BlockIndex` 规划**与 **`SqliteMetadataDb` 现状**：表结构、事务与 `dataId`+`chunk_idx` 的查询/校验应以 **`03-Storage.md` §二、§2.6** 及 **`SqliteMetadataDb`** 为准；`BlockIndex` 接入时应委托或复用该层，避免重复/schema 漂移。
 
 ### 3.3 阶段三：并发与事务一致性
 1. 保证 `.zdb` 的文件锁策略与 SQLite 事务策略一致，避免写入 .zdb 成功但 SQLite 记录失败造成状态不一致。

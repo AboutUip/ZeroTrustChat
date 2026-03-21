@@ -1,47 +1,50 @@
 #pragma once
 
-#include "../Types.h"
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
-namespace ZChatIM
-{
-    namespace mm2
-    {
-        // =============================================================
-        // 存储完整性校验管理器契约
-        // - 写入 .zdb 后：记录 data_blocks.sha256 到 SQLite
-        // - 读取 .zdb 后：计算 sha256 并与 SQLite 中记录比对
-        // =============================================================
-        class StorageIntegrityManager
-        {
-        public:
-            // ComputeSha256:
-            // - 输入：任意数据块明文/密文原始字节
-            // - 输出：32 bytes sha256（outSha256[32]）
-            bool ComputeSha256(const uint8_t* data, size_t length, uint8_t outSha256[32]);
+namespace ZChatIM::mm2 {
 
-            // RecordDataBlockHash:
-            // - 在 data_blocks 中记录该 (dataId, chunkIndex) 对应的 sha256
-            // - length 建议与写入 .zdb 的 length 一致
-            bool RecordDataBlockHash(
-                const std::string& dataId,
-                uint32_t chunkIndex,
-                const std::string& fileId,
-                uint64_t offset,
-                uint64_t length,
-                const uint8_t sha256[32]);
+    class SqliteMetadataDb;
 
-            // VerifyDataBlockHash:
-            // - 从 SQLite 取出 (dataId, chunkIndex) 的记录 sha256
-            // - 与传入 sha256 比对
-            bool VerifyDataBlockHash(
-                const std::string& dataId,
-                uint32_t chunkIndex,
-                const uint8_t sha256[32],
-                bool& outMatch);
-        };
-    } // namespace mm2
-} // namespace ZChatIM
+    // =============================================================
+    // Storage integrity: write/read .zdb payload bytes, record & verify sha256 in SQLite.
+    // Call Bind(db) after Open+InitializeSchema on the metadata DB (see 03-Storage.md §5).
+    // =============================================================
+    class StorageIntegrityManager {
+    public:
+        StorageIntegrityManager() = default;
 
+        void Bind(SqliteMetadataDb* db) noexcept { db_ = db; }
+
+        // length > 0 requires non-null data. outSha256 must be non-null.
+        bool ComputeSha256(const uint8_t* data, size_t length, uint8_t outSha256[32]);
+
+        // dataId must be MESSAGE_ID_SIZE (16) bytes (same as data_blocks.data_id).
+        // chunkIndex must be <= INT_MAX so it maps safely to sqlite chunk_idx.
+        bool RecordDataBlockHash(
+            const std::vector<uint8_t>& dataId,
+            uint32_t                    chunkIndex,
+            const std::string&          fileId,
+            uint64_t                    offset,
+            uint64_t                    length,
+            const uint8_t               sha256[32]);
+
+        // Loads stored row; sets outMatch if row exists and stored sha256 equals passed digest.
+        // Returns false if db not bound, bad dataId size, or row missing / DB error.
+        bool VerifyDataBlockHash(
+            const std::vector<uint8_t>& dataId,
+            uint32_t                    chunkIndex,
+            const uint8_t               sha256[32],
+            bool&                       outMatch);
+
+        std::string LastError() const { return lastError_; }
+
+    private:
+        SqliteMetadataDb* db_       = nullptr;
+        std::string       lastError_;
+    };
+
+} // namespace ZChatIM::mm2

@@ -1,6 +1,7 @@
 #include "mm1/managers/SessionActivityManager.h"
 #include "Types.h"
 
+#include <ctime>
 #include <chrono>
 #include <cstdint>
 #include <map>

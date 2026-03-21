@@ -1,0 +1,20 @@
+{
+  "version": "0.2.1",
+  "defaults": {},
+  "configurations": [
+    {
+      "type": "default",
+      "project": "CMakeLists.txt",
+      "projectTarget": "ZChatIM.exe",
+      "name": "ZChatIM",
+      "args": []
+    },
+    {
+      "type": "default",
+      "project": "CMakeLists.txt",
+      "projectTarget": "ZChatIM.exe",
+      "name": "ZChatIM --test",
+      "args": [ "--test" ]
+    }
+  ]
+}
