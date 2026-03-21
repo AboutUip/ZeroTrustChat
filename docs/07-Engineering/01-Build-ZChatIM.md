@@ -70,16 +70,16 @@ cd ZChatIM && cmake -B build && cmake --build build --config Release
 
 ## 6.1 控制台 EXE 与树内测试
 
-默认 **`ZCHATIM_BUILD_EXE=ON`**、**`ZCHATIM_BUILD_TESTS=OFF`**：`ZChatIM` 可执行文件**仅**编译 **`main.cpp`**，**不**依赖 **`tests/*.cpp`**，适合发布与最小构建。此时运行 **`--test` / `--test-minimal` / `--test-mm250`** 会打印提示并以退出码 **2** 结束。
+默认 **`ZCHATIM_BUILD_EXE=ON`**、**`ZCHATIM_BUILD_TESTS=ON`**：`ZChatIM` 会编译 **`tests/mm1_managers_test.cpp`**、**`tests/mm2_fifty_scenarios_test.cpp`**，并支持 **`--test` / `--test-minimal` / `--test-mm250`**。
 
-若要在本机跑树内测试，须打开开关并保证仓库中存在对应源文件：
+若**不提交**或**删除**上述测试源、或只想编最小控制台 EXE，可关闭树内测试（**仅 `main.cpp`**，构建不再依赖 **`tests/*.cpp`**）：
 
 ```bash
-cmake -B build -DZCHATIM_BUILD_TESTS=ON
+cmake -B build -DZCHATIM_BUILD_TESTS=OFF
 cmake --build build --config Release
 ```
 
-会额外编译 **`tests/mm1_managers_test.cpp`**、**`tests/mm2_fifty_scenarios_test.cpp`**，上述 **`--test*`** 参数即生效。
+此时运行 **`--test*`** 会打印提示并以退出码 **2** 结束。
 
 ## 7. 运行期说明（Windows）
 

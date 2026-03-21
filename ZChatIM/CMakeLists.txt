@@ -12,9 +12,9 @@ project(ZChatIM VERSION 1.0.0 LANGUAGES CXX C)
 # =========================
 option(ZCHATIM_BUILD_JNI "Build JNI shared library" ON)
 option(ZCHATIM_BUILD_EXE "Build console executable" ON)
-# Default OFF: ZChatIM.exe is main.cpp only (no dependency on tests/*.cpp); --test* prints a hint and exits 2.
-# ON: also compile tests/mm1_managers_test.cpp + tests/mm2_fifty_scenarios_test.cpp for --test / --test-minimal / --test-mm250.
-option(ZCHATIM_BUILD_TESTS "Compile in-tree tests into ZChatIM.exe" OFF)
+# Default ON: compile tests/mm1_managers_test.cpp + tests/mm2_fifty_scenarios_test.cpp into ZChatIM.exe (--test* 可用).
+# OFF: only main.cpp (no dependency on tests/*.cpp); --test* prints a hint and exits 2.
+option(ZCHATIM_BUILD_TESTS "Compile in-tree tests into ZChatIM.exe" ON)
 
 # 密码学后端（与 Crypto.cpp 一致）：
 # - Windows：BCrypt + CryptoAPI（AES-GCM / PBKDF2 / RNG；Auth 会话随机）— **不需要** OpenSSL。
