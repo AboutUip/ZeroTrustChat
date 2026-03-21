@@ -11,23 +11,20 @@
 #include <mutex>
 #include <vector>
 
-#if !defined(_WIN32)
-#include <cerrno>
-#endif
-
 #if defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <bcrypt.h>
-#pragma comment(lib, "bcrypt.lib")
+#    ifndef WIN32_LEAN_AND_MEAN
+#        define WIN32_LEAN_AND_MEAN
+#    endif
+#    ifndef NOMINMAX
+#        define NOMINMAX
+#    endif
+#    include <windows.h>
+#    include <bcrypt.h>
 #else
-#include <fcntl.h>
-#include <unistd.h>
+#    include <cerrno>
+#    include <fcntl.h>
+#    include <unistd.h>
+#    include <openssl/rand.h>
 #endif
 
 namespace ZChatIM::mm1 {
@@ -148,7 +145,7 @@ namespace ZChatIM::mm1 {
             if (out == nullptr || len == 0) {
                 return false;
             }
-        #if defined(_WIN32)
+#if defined(_WIN32)
             if (len > static_cast<size_t>(std::numeric_limits<ULONG>::max())) {
                 return false;
             }
@@ -158,7 +155,18 @@ namespace ZChatIM::mm1 {
                 static_cast<ULONG>(len),
                 BCRYPT_USE_SYSTEM_PREFERRED_RNG);
             return st == 0;
-        #else
+#else
+            if (len > static_cast<size_t>(std::numeric_limits<int>::max())) {
+                return false;
+            }
+            const int n = static_cast<int>(len);
+            if (RAND_bytes(out, n) == 1) {
+                return true;
+            }
+            RAND_poll();
+            if (RAND_bytes(out, n) == 1) {
+                return true;
+            }
             const int fd = open("/dev/urandom", O_RDONLY);
             if (fd < 0) {
                 return false;
@@ -181,7 +189,7 @@ namespace ZChatIM::mm1 {
             }
             close(fd);
             return true;
-        #endif
+#endif
         }
 
         bool CredentialShapeOk(const std::vector<uint8_t>& token)

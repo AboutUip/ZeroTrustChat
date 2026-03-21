@@ -12,6 +12,43 @@ project(ZChatIM VERSION 1.0.0 LANGUAGES CXX C)
 # =========================
 option(ZCHATIM_BUILD_JNI "Build JNI shared library" ON)
 option(ZCHATIM_BUILD_EXE "Build console executable" ON)
+# Default OFF: ZChatIM.exe is main.cpp only (no dependency on tests/*.cpp); --test* prints a hint and exits 2.
+# ON: also compile tests/mm1_managers_test.cpp + tests/mm2_fifty_scenarios_test.cpp for --test / --test-minimal / --test-mm250.
+option(ZCHATIM_BUILD_TESTS "Compile in-tree tests into ZChatIM.exe" OFF)
+
+# 密码学后端（与 Crypto.cpp 一致）：
+# - Windows：BCrypt + CryptoAPI（AES-GCM / PBKDF2 / RNG；Auth 会话随机）— **不需要** OpenSSL。
+# - Linux / macOS：OpenSSL 3 libcrypto（同上算法；与 Windows **磁盘格式字节兼容**）。
+if(WIN32)
+    set(ZCHATIM_MM2_CRYPTO_BACKEND "BCrypt")
+else()
+    set(ZCHATIM_MM2_CRYPTO_BACKEND "OpenSSL3")
+    if(NOT OPENSSL_ROOT_DIR AND DEFINED ENV{OPENSSL_ROOT_DIR})
+        file(TO_CMAKE_PATH "$ENV{OPENSSL_ROOT_DIR}" _zchatim_openssl_root)
+        set(OPENSSL_ROOT_DIR "${_zchatim_openssl_root}" CACHE PATH "OpenSSL installation root (override if FindOpenSSL fails)")
+    endif()
+    if(NOT OPENSSL_ROOT_DIR)
+        set(_zchatim_openssl_reserved "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/openssl/versions/current")
+        if(EXISTS "${_zchatim_openssl_reserved}/include/openssl/ssl.h")
+            set(OPENSSL_ROOT_DIR "${_zchatim_openssl_reserved}" CACHE PATH "OpenSSL root (thirdparty/openssl/versions/current)")
+            message(STATUS "OPENSSL_ROOT_DIR (auto from reserved folder): ${_zchatim_openssl_reserved}")
+        endif()
+    endif()
+    find_package(OpenSSL 3.0 QUIET)
+    if(NOT TARGET OpenSSL::Crypto)
+        message(FATAL_ERROR
+            "Could not find OpenSSL 3.0 or newer (Linux/macOS MM2 crypto + Auth RNG).\n"
+            "\n"
+            "Fix:\n"
+            "  Linux: sudo apt install libssl-dev (or distro equivalent)\n"
+            "  macOS: brew install openssl@3 && export OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)\n"
+            "  Or set OPENSSL_ROOT_DIR to a tree with include/openssl/ssl.h and libcrypto.\n"
+            "\n"
+            "Windows builds use BCrypt and do not need this step.\n"
+            "See docs/07-Engineering/01-Build-ZChatIM.md\n"
+        )
+    endif()
+endif()
 
 # C++ 标准配置
 set(CMAKE_CXX_STANDARD 17)
@@ -55,7 +92,11 @@ add_library(ZChatIMCore STATIC
     src/mm1/MM1_security_submodules.cpp
     src/mm1/managers/AuthSessionManager.cpp
     src/mm1/managers/SessionActivityManager.cpp
+    src/mm2/MM2.cpp
     src/mm2/crypto/Sha256.cpp
+    src/mm2/storage/Crypto.cpp
+    src/mm2/storage/BlockIndex.cpp
+    src/mm2/storage/MessageQueryManager.cpp
     src/mm2/storage/SqliteMetadataDb.cpp
     src/mm2/storage/StorageIntegrityManager.cpp
     src/mm2/storage/ZdbFile.cpp
@@ -64,10 +105,10 @@ add_library(ZChatIMCore STATIC
 target_include_directories(ZChatIMCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_link_libraries(ZChatIMCore PRIVATE sqlite3)
 if(WIN32)
-    # BCryptGenRandom：静态库使用者须解析该符号，故用 PUBLIC。
-    target_link_libraries(ZChatIMCore PUBLIC bcrypt)
+    target_link_libraries(ZChatIMCore PUBLIC bcrypt advapi32 crypt32 PRIVATE sqlite3)
+else()
+    target_link_libraries(ZChatIMCore PUBLIC OpenSSL::Crypto PRIVATE sqlite3)
 endif()
 
 # =========================
@@ -123,15 +164,22 @@ endif()
 # Console executable (optional)
 # =========================
 if(ZCHATIM_BUILD_EXE)
-    add_executable(ZChatIM
-        main.cpp
-        tests/mm1_managers_test.cpp
-    )
+    set(_zchatim_exe_sources main.cpp)
+    if(ZCHATIM_BUILD_TESTS)
+        list(APPEND _zchatim_exe_sources
+            tests/mm1_managers_test.cpp
+            tests/mm2_fifty_scenarios_test.cpp
+        )
+    endif()
+    add_executable(ZChatIM ${_zchatim_exe_sources})
     target_link_libraries(ZChatIM PRIVATE ZChatIMCore)
     target_include_directories(ZChatIM PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
+    if(NOT ZCHATIM_BUILD_TESTS)
+        target_compile_definitions(ZChatIM PRIVATE ZCHATIM_NO_INTREE_TESTS=1)
+    endif()
 
     # Visual Studio / 多配置生成器：默认会把 exe 放到 bin/Release/，而启动项常查找 bin/ZChatIM.exe。
     # 统一输出到 ${CMAKE_BINARY_DIR}/bin（无 Debug/Release 子目录）。
@@ -153,10 +201,15 @@ message(STATUS "===============================================")
 message(STATUS "ZChatIM Build Configuration")
 message(STATUS "===============================================")
 message(STATUS "Platform: ${CMAKE_SYSTEM_NAME}")
+message(STATUS "MM2 crypto backend: ${ZCHATIM_MM2_CRYPTO_BACKEND}")
+if(NOT WIN32)
+    message(STATUS "OpenSSL: ${OPENSSL_VERSION}")
+endif()
 message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID}")
 message(STATUS "C++ Standard: C++${CMAKE_CXX_STANDARD}")
 message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Build JNI: ${ZCHATIM_BUILD_JNI}")
 message(STATUS "Build EXE: ${ZCHATIM_BUILD_EXE}")
+message(STATUS "In-tree tests in EXE: ${ZCHATIM_BUILD_TESTS}")
 message(STATUS "ZChatIM.exe output: ${CMAKE_BINARY_DIR}/bin (flat, MSVC multi-config)")
 message(STATUS "===============================================")

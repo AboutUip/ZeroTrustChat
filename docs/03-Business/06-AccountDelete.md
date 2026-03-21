@@ -1,5 +1,9 @@
 # 账户注销技术规范
 
+> **JNI**：**`deleteAccount` / `isAccountDeleted`**（**`docs/06-Appendix/01-JNI.md`** 第十节）。  
+> **实现**：**`05-ZChatIM-Implementation-Status.md` 第3节至第4节** — MM1 注销链路与 **JniBridge** 多为契约/桩；**MM2** 侧 **`CleanupAllData`** 等可清除本地库（与「仅销毁密钥不删密文」的产品叙述可能冲突，**落地时须在本文 第五节 与 `03-Storage.md` 间统一**）。  
+> **冲突与权威**：**`docs/README.md`**「冲突与权威」。
+
 ## 一、注销流程
 
 ```

@@ -94,9 +94,10 @@ MessageKey      X   X   X   X   X   X   X   X   X   X   X   X   X
 ## 五、安全保证
 
 - 生成: MM1 可信区
-- 存储: 仅存内存
-- 销毁: Level 2
-- 服务重启: 密钥丢失
+- 存储: **协议层密钥链（Identity / Master / Session 等）以 MM1 内存叙述为主**（见 **`01-MM1.md`** / 本节流程）
+- **与 MM2 区分**：**消息 AES 密钥文件** **`indexDir/mm2_message_key.bin`** **落盘**，进程重启后仍在（除非 **`Cleanup` / `CleanupAllData` / 删目录**）；见 **`03-Storage.md` 第三节**、**`docs/README.md`**「冲突与权威」
+- 销毁: Level 2（内存与策略性覆写）
+- 服务重启: **MM1 内存态密钥与会话丢失**；**`mm2_message_key.bin` 不因此自动丢失**
 
 ## 六、参数汇总
 

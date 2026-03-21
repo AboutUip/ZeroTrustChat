@@ -5,20 +5,33 @@
 
 # 数据文件
 *.zdb
+# ZChatIM --test / --test-minimal 持久输出（./data，cwd 为 ZChatIM 目录时）
 .mvn/
-ZChatIM/docs/
+# ZChatIM/docs：忽略本地生成物；以下契约文档须保持可跟踪
+ZChatIM/docs/*
+!ZChatIM/docs/JNI-API-Documentation.md
+!ZChatIM/docs/BUILD-WINDOWS.md
+
+# 客户端发布物目录：默认只提交 README；安装包用 CI/Release 分发（须入库时用 git add -f）
+Client/*
+!Client/README.md
 
 # 测试数据/临时目录（仅仓库根下 tests/；勿用 tests/ 通配，否则会忽略 ZChatIM/tests/）
-tests/
 ZChatServer/src/test/
+ZChatIM/tests/
 
 # 日志文件
 *.log
-*.txt
 AgentArea/
 
 # 编译输出
 out/
 build/
+build-*/
 cmake-build-*/
 target/
+
+# ZChatIM：用户本机下载的 OpenSSL 多版本（thirdparty/openssl/versions 下除说明文件外不入库）
+ZChatIM/thirdparty/openssl/versions/*
+!ZChatIM/thirdparty/openssl/versions/README.md
+!ZChatIM/thirdparty/openssl/versions/.gitkeep

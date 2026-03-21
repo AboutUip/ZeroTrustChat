@@ -1,5 +1,9 @@
 # SpringBoot 技术规范
 
+> **仓库边界**：**`ZChatIM/`** 提供 **MM1/MM2 + JNI 头 + 桩 `ZChatIMJNI.cpp`**；**SpringBoot/Netty** 工程若在本 monorepo 外，须与本节及 **`02-ZSP-Protocol.md`** 对齐。  
+> **JNI 契约**：**不得以本节 第五节 简表替代** **`docs/06-Appendix/01-JNI.md`**（含 **`callerSessionId` 首参**、`imSessionId` 与 **`StoreMessage`** 参数名）。  
+> **落盘**：消息持久化由 **`MM2::StoreMessage`** 等完成（**`docs/README.md`**「冲突与权威」）；SpringBoot **不直连** SQLite/`.zdb` 文件。
+
 ## 一、职责
 
 - ZSP 协议服务端
@@ -7,7 +11,7 @@
 - 消息路由
 - 对外 HTTP API
 
-**原则**：不处理任何安全相关数据，仅持有引用 ID。
+**原则**：不处理任何安全相关数据，仅持有引用 ID；**Payload opaque 透传** 至 JNI。
 
 详见 [01-Overview.md](../01-Architecture/01-Overview.md)
 
@@ -67,8 +71,8 @@
 ```
 1. Netty 接收 ZSP 数据
 2. ZSPDecoder 解析 Header + Meta
-3. 获取 MessageType、SessionID
-4. 调用 JNI: storeMessage(sessionId, payload)
+3. 获取 MessageType、ZSP 层 SessionID（4B 头字段，与 imSessionId 16B 不同，见 01-JNI.md）
+4. 调用 JNI: 已认证上下文中 storeMessage(caller, imSessionId, payload)（完整签名见 01-JNI.md）
 5. 获取 msgId
 6. 路由发送
 ```
@@ -76,9 +80,9 @@
 ### 4.2 发送消息
 
 ```
-1. 根据 sessionId 查找目标 Channel
-2. 调用 JNI: getMessage(msgId)
-3. 获取加密消息
+1. 根据连接查找目标 Channel
+2. 调用 JNI: retrieveMessage(caller, messageId)（或 getSessionMessages 等）
+3. 获取 opaque 载荷
 4. ZSPEncoder 编码
 5. 发送
 ```
@@ -116,7 +120,7 @@
 |------|------|
 | JNI 调用失败 | 返回错误码 |
 | sessionId 无效 | 断开连接 |
-| 目标不在线 | 消息缓存 (由 C++ 处理) |
+| 目标不在线 | **离线队列 / 推送**（产品）；**非**「SpringBoot 写 MM2」——持久化仅在 **native MM2** 路径完成 |
 | 超时 | 重试/断开 |
 
 ---

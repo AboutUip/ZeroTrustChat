@@ -2,7 +2,7 @@
 
 **严格对齐**：本表 **`C++` 列**与 **`ZChatIM/include/jni/JniInterface.h`** 中 `static` 方法名及重载一一对应；**`JniBridge.h`** 实例方法同名、同参数、同返回值（无 `static`）。**`逻辑（camelCase）` 列**供 Java/JNI 命名参考，与 C++ `PascalCase` 为同一契约。
 
-**维护规则**：增删改任一 JNI 入口时，须**同步**更新本文件、`ZChatIM/docs/JNI-API-Documentation.md`、上述两份头文件。
+**维护规则**：增删改任一 JNI 入口时，须**同步**更新本文件、`ZChatIM/docs/JNI-API-Documentation.md`、**`ZChatIM/include/jni/JniInterface.h`**、**`ZChatIM/include/jni/JniBridge.h`**。
 
 **类型简写**（与头文件一致）：`bytes` = `std::vector<uint8_t>`；`bytes[]` = `std::vector<std::vector<uint8_t>>`；`mapSS` = `std::map<std::string,std::string>`。
 
@@ -16,7 +16,7 @@
 
 **并发（头文件契约）**：`JniBridge::m_apiRecursiveMutex`、`MM1::m_apiRecursiveMutex`、`MM2::m_stateMutex`（递归）；`MessageQueryManager` 仅在 MM2 已持 `m_stateMutex` 时使用。
 
-**`Auth` 第三参 `clientIp`**：可为空；非空时 `AuthSessionManager` 启用 IP 级限流与 `userId‖IP` 封禁键（见 `docs/03-Business/02-Auth.md` §七）。
+**`Auth` 第三参 `clientIp`**：可为空；非空时 `AuthSessionManager` 启用 IP 级限流与 `userId‖IP` 封禁键（见 `docs/03-Business/02-Auth.md` 第七节）。
 
 **路由摘要**（与 `JNI-API-Documentation.md` 一致）：
 - `listMessages*` → `mm2::MM2::GetMessageQueryManager()`
@@ -53,11 +53,11 @@
 | `RetrieveMessage` | retrieveMessage | caller, messageId | `bytes`（空=null） | |
 | `DeleteMessage` | deleteMessage | caller, messageId, senderId, signatureEd25519 | `bool` | 对齐 MessageRecall |
 | `RecallMessage` | recallMessage | caller, messageId, senderId, signatureEd25519 | `bool` | |
-| `ListMessages` | listMessages | caller, userId, count | `bytes[]` | 经 `GetMessageQueryManager` |
-| `ListMessagesSinceTimestamp` | listMessagesSinceTimestamp | caller, userId, sinceTimestampMs, count | `bytes[]` | 同上 |
-| `ListMessagesSinceMessageId` | listMessagesSinceMessageId | caller, userId, lastMsgId, count | `bytes[]` | 同上 |
+| `ListMessages` | listMessages | caller, userId, count | `bytes[]` | 经 **`GetMessageQueryManager`**；**`userId`** 与 **`imSessionId` 同长（16B）**；**每元素**：**`message_id(16)‖payload_len(uint32 BE)‖payload`**（见 **`MessageQueryManager.h`** / **`03-Storage.md` 第七节**） |
+| `ListMessagesSinceTimestamp` | listMessagesSinceTimestamp | caller, userId, sinceTimestampMs, count | `bytes[]` | **`count<=0`**：空集且不改 **`LastError`**。**`count>0`**：须 **`Initialize`** 且 **`userId`** 16B；否则 **`LastError`** 为未初始化/长度错。已就绪时 native **仍返回空**，**`LastError`** 为 **not supported**（**`im_messages` 无时间列**） |
+| `ListMessagesSinceMessageId` | listMessagesSinceMessageId | caller, userId, lastMsgId, count | `bytes[]` | **`lastMsgId` 空**=从会话最早起 **`count`** 条；**非空**=严格晚于该 id 的后 **`count`** 条；编码同 **`ListMessages`** |
 | `MarkMessageRead` | markMessageRead | caller, messageId, readTimestampMs | `bool` | |
-| `GetUnreadSessionMessageIds` | getUnreadSessionMessageIds | caller, imSessionId, limit | `bytes[]` | 每元素为 messageId |
+| `GetUnreadSessionMessageIds` | getUnreadSessionMessageIds | caller, imSessionId, limit | `bytes[]` | 每元素为 **16B `messageId`**。native 调用 **`MM2::GetUnreadSessionMessages`**；配对第二元当前为 **0**（未读占位），JNI 仅输出 id 列表即可（见 **`MM2.h`** / **`ZChatIM/docs/JNI-API-Documentation.md`** 第2.2节） |
 | `StoreMessageReplyRelation` | storeMessageReplyRelation | caller, messageId, repliedMsgId, repliedSenderId, repliedContentDigest, senderId, signatureEd25519 | `bool` | 先 MM1 校验 |
 | `GetMessageReplyRelation` | getMessageReplyRelation | caller, messageId | `bytes[]` | 三元组各为一行元素 |
 | `EditMessage` | editMessage | caller, messageId, newEncryptedContent, editTimestampSeconds, signature, senderId | `bool` | |
@@ -107,7 +107,7 @@
 
 | C++ | 逻辑（camelCase） | 输入 | 输出（C++） | 说明 |
 |-----|-------------------|------|-------------|------|
-| `StoreFileChunk` | storeFileChunk | caller, fileId(string), chunkIndex(**int**), data | `bool` | |
+| `StoreFileChunk` | storeFileChunk | caller, fileId(string), chunkIndex(**int**), data | `bool` | `chunkIndex` 须 **≥ 0** 且与 `data_blocks.chunk_idx` 一致；负值在 C++ 侧按 `uint32_t` 解释后会触发「过大」校验失败。`fileId` 编码须与 **`SHA256` 派生 `data_id` 所用字节** 一致（通常为 UTF-8）。分片大小受 **`ZDB_MAX_WRITE_SIZE`** 限制（见 `Types.h` / `03-Storage.md` 第七节）。 |
 | `GetFileChunk` | getFileChunk | caller, fileId(string), chunkIndex(**int**) | `bytes`（空=null） | |
 | `CompleteFile` | completeFile | caller, fileId(string), sha256(bytes) | `bool` | |
 | `CancelFile` | cancelFile | caller, fileId(string) | `bool` | |
@@ -119,7 +119,7 @@
 
 | C++ | 逻辑（camelCase） | 输入 | 输出（C++） | 说明 |
 |-----|-------------------|------|-------------|------|
-| `GetSessionMessages` | getSessionMessages | caller, imSessionId, limit(int) | `bytes[]` | 编码由实现约定 |
+| `GetSessionMessages` | getSessionMessages | caller, imSessionId, limit(int) | `bytes[]` | Native **`MM2::GetSessionMessages`** 返回 **`vector<pair<message_id,payload>>`**（**`limit==0`** 空集；顺序见 **`03-Storage.md` 第2.6节 / 第七节**）。JNI 打包建议：与 **`ListMessages`** 每行一致，即 **`message_id(16)‖lenBE32‖payload`** 串联多条，或自定义长度表；见 **`MessageQueryManager.h`**。 |
 | `GetSessionStatus` | getSessionStatus | caller, imSessionId | `bool` | active=true |
 | `TouchSession` | touchSession | caller, imSessionId, nowMs | `void` | |
 | `CleanupExpiredSessions` | cleanupExpiredSessions | caller, nowMs | `void` | 定时/运维须持有效 caller |

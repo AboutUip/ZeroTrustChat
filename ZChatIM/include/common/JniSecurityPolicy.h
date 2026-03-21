@@ -27,8 +27,10 @@
 //    - jni::JniBridge：实现 SHOULD 对每个 public 方法入口持 m_apiRecursiveMutex 全程排他锁，
 //      再进入 MM1/MM2，避免跨线程状态撕裂（性能不足时再改为分层锁并重新审计）。
 //    - mm1::MM1：实现 SHOULD 对每个 public 实例方法入口持 m_apiRecursiveMutex。
-//    - mm2::MM2：实现 SHOULD 对每个 public 实例方法入口持 m_stateMutex；调用
-//      GetMessageQueryManager() 返回的查询接口时 **不得**在无 MM2 同步下泄露引用到其它线程。
+//    - mm2::MM2：实现 SHOULD 对每个 public 实例方法入口持 m_stateMutex。
+//      GetMessageQueryManager()::List* 经 MM2 内部回调持同一 m_stateMutex，可与其它 MM2 API 交错调用。
+//      GetStorageIntegrityManager() 返回引用不持锁；对其子调用仍须与 MM2 **串行** 或由 JniBridge 层互斥覆盖，
+//      **不得**在无等价同步下跨线程持有/使用。
 //
 // =============================================================================
 

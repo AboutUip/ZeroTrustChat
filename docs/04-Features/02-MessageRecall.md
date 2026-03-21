@@ -1,13 +1,15 @@
 # 消息撤回技术规范
 
+> **与当前 `ZChatIM` C++**：JNI 契约要求 **`deleteMessage` / `recallMessage`** 经 **`mm1::MessageRecallManager`**，**禁止**直调 **`MM2::DeleteMessage`**（见 **`docs/06-Appendix/01-JNI.md`** 路由摘要）。MM2 侧 **`DeleteMessage`** 为 **`ZdbManager::DeleteData` 清零** + SQLite **`DeleteMessageMetadataTransaction`**（非单文件「物理截断」）。下文「物理删除」指 **逻辑不可恢复 / 字节清零** 的产品语义。
+
 ## 一、撤回流程
 
 ```
 用户发送撤回请求:
 1. 携带 msgId
-2. MM1 查找索引 → MM2 地址
-3. Level 2 覆写
-4. 删除 MM1 索引
+2. MM1 校验签名与权限 → 调度 MM2 删除/覆写
+3. Level 2 覆写（MM1/产品层）
+4. 删除/更新 MM1 侧会话与索引状态
 5. 返回成功
 ```
 
@@ -46,7 +48,7 @@ Level 2 覆写:
 
 ## 五、安全保证
 
-- MM2 物理删除
-- 索引同步删除
-- Level 2 覆写
+- MM2：**.zdb 区间清零** + **`data_blocks`/`im_messages` 原子删行**（v1 **不收缩** `usedSize`；见 **`03-Storage.md` 第七节**）
+- 索引与块一致（失败路径见 **`05-ZChatIM-Implementation-Status.md` 第8节**）
+- Level 2 覆写（MM1 内存与策略）
 - 强制撤回

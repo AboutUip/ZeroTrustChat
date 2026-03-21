@@ -15,6 +15,9 @@ namespace ZChatIM
         // =============================================================
         // ZDB文件管理器
         // =============================================================
+        // 并发：所有公开 API 由 `m_mutex` 串行化；底层 `ZdbFile` 另有递归锁。
+        // `fileId` 须为单层文件名（无路径分隔符、无 ".."），见实现内 `IsSafeZdbFileId`。
+        // =============================================================
         
         class ZdbManager {
         public:
@@ -68,7 +71,7 @@ namespace ZChatIM
             // 空间管理
             // =============================================================
             
-            // 分配空间
+            // 分配空间：在持锁内向 .zdb 写入 `size` 字节 0（从返回的 outOffset 起），避免仅“口头预留”的 TOCTOU
             bool AllocateSpace(size_t size, std::string& outFileId, uint64_t& outOffset);
             
             // 释放空间
@@ -103,7 +106,7 @@ namespace ZChatIM
             // 内部方法
             // =============================================================
             
-            // 选择文件（负载均衡）
+            // 选择首个「可用空间 >= size」的文件（`m_fileList` 已排序，顺序稳定但非严格负载均衡）
             bool SelectFile(size_t size, std::string& outFileId);
             
             // 扫描现有文件
@@ -127,8 +130,6 @@ namespace ZChatIM
             // 已持有 m_mutex：释放句柄并清空映射（Initialize 用，避免与 Cleanup 重入锁死锁）
             void CleanupUnlocked();
 
-            void RefreshTotalsLocked();
-
             // =============================================================
             // 成员变量
             // =============================================================
@@ -138,8 +139,6 @@ namespace ZChatIM
             mutable std::mutex m_mutex;                     // 互斥锁
             std::map<std::string, std::shared_ptr<ZdbFile>> m_files; // 文件映射
             std::vector<std::string> m_fileList;            // 文件列表
-            size_t m_totalUsedSpace;                        // 总已用空间
-            size_t m_totalAvailableSpace;                   // 总可用空间
         };
         
     } // namespace mm2

@@ -1,5 +1,11 @@
 # 消息重传技术规范
 
+> **文档类型**：**ZSP / 传输层** 行为；**不**描述 MM2 落盘或 SQLite。  
+> **权威**：**`docs/01-Architecture/02-ZSP-Protocol.md`**；与 **TCP/TLS** 栈参数以**实际 Netty/客户端实现**为准。  
+> **冲突与落盘**：重传与 **消息是否写入 `.zdb`** 无关；持久化语义见 **`docs/README.md`**「冲突与权威」、**`docs/02-Core/03-Storage.md` 第七节**。
+
+---
+
 ## 一、ZSP协议层设计
 
 ```
@@ -12,6 +18,8 @@
 │  MessageType.RECEIPT: 已读回执                               │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+---
 
 ## 二、重传流程 (ZSP层)
 
@@ -28,6 +36,8 @@
 2. 发送 ACK (0x0D)
 3. 用户已读 → 发送 RECEIPT (0x0C)
 ```
+
+---
 
 ## 三、防重放 - 滑动窗口
 
@@ -48,6 +58,8 @@
 └── 窗口滑动: 收到 ACK 后滑动
 ```
 
+---
+
 ## 四、窗口状态
 
 ```
@@ -62,6 +74,8 @@
 3. Sequence < ExpectedSequence: 丢弃 (重复)
 ```
 
+---
+
 ## 五、参数
 
 | 项目 | 值 |
@@ -73,3 +87,22 @@
 | ACK | ZSP 0x0D |
 | RECEIPT | ZSP 0x0C |
 | NACK | ZSP 0x0E |
+
+---
+
+## 六、实现状态（ZChatIM C++）
+
+| 层级 | 说明 |
+|------|------|
+| **本仓库** | **`ZChatIMCore`** 以 **MM1/MM2 存储与 JNI 头**为主；**不含 Netty ZSP 编解码器**。重传在 **Java/SpringBoot** 实现时须与本节及 **`02-ZSP-Protocol.md`** 对齐。 |
+| **联调** | JNI 业务入口见 **`docs/06-Appendix/01-JNI.md`**；当前 **`ZChatIMJNI.cpp`** 为桩（**`05-ZChatIM-Implementation-Status.md` 第4节**）。 |
+
+---
+
+## 七、相关文档
+
+| 文档 | 用途 |
+|------|------|
+| [02-ZSP-Protocol.md](../01-Architecture/02-ZSP-Protocol.md) | 消息类型、头与 TLV 区 |
+| [01-SpringBoot.md](../03-Business/01-SpringBoot.md) | 服务端 Netty 职责 |
+| [README.md](../README.md) | 冲突与权威（落盘 vs 内存） |

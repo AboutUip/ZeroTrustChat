@@ -1,5 +1,8 @@
 # 消息编辑技术规范
 
+> **实现状态**：**`MM2::EditMessage` / `GetMessageEditState` 已接库**（**`im_messages.edit_count` / `last_edit_time_s`** + **`data_blocks` chunk0 密文替换**，见 **`03-Storage.md` 第2.6节**、**`05` 第2.2节**）。JNI **`editMessage` / `getMessageEditState`** 仍须 **MM1 签名校验** 后再调 MM2（**`01-JNI.md`**）；**桥接未接前**不视为产品已通。下文为 **产品与协议目标**。  
+> **TLV**：**`Type = 0x12` `MessageEdit`**（**`02-ZSP-Protocol.md` 第7.2节**）；**≠** **MessageType `0x12` `FRIEND_REQUEST`**（第五节）。
+
 ## 一、编辑流程
 
 ```

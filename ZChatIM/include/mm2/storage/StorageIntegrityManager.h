@@ -11,7 +11,7 @@ namespace ZChatIM::mm2 {
 
     // =============================================================
     // Storage integrity: write/read .zdb payload bytes, record & verify sha256 in SQLite.
-    // Call Bind(db) after Open+InitializeSchema on the metadata DB (see 03-Storage.md §5).
+    // Call Bind(db) after Open+InitializeSchema on the metadata DB (see 03-Storage.md 第五节).
     // =============================================================
     class StorageIntegrityManager {
     public:

@@ -1,4 +1,4 @@
-// SHA-256: Windows BCrypt; other platforms portable FIPS 180-4 style implementation.
+// SHA-256: portable FIPS 180-4 style implementation (all platforms).
 
 #include "mm2/crypto/Sha256.h"
 
@@ -6,19 +6,9 @@
 #include <cstring>
 #include <vector>
 
-#ifdef _WIN32
-#    ifndef NOMINMAX
-#        define NOMINMAX
-#    endif
-#    include <windows.h>
-#    include <bcrypt.h>
-#endif
-
 namespace ZChatIM::crypto {
 
-#ifndef _WIN32
-
-    namespace {
+    namespace detail {
 
         constexpr uint32_t kInit[8] = {
             0x6a09e667UL,
@@ -97,63 +87,77 @@ namespace ZChatIM::crypto {
             state[7] += h;
         }
 
-        bool sha256_portable(const uint8_t* data, size_t length, uint8_t outDigest[32])
+        void digestFromState(const uint32_t state[8], uint8_t outDigest[32])
         {
-            if (length > 0 && data == nullptr) {
-                return false;
-            }
-            uint32_t state[8];
-            std::memcpy(state, kInit, sizeof(state));
-
-            uint8_t  buf[64]{};
-            size_t   bufLen = 0;
-            uint64_t bitLen = 0;
-
-            auto processBlock = [&](const uint8_t* block) {
-                compress(state, block);
-            };
-
-            while (length > 0) {
-                const size_t take = std::min<size_t>(64 - bufLen, length);
-                std::memcpy(buf + bufLen, data, take);
-                bufLen += take;
-                data += take;
-                length -= take;
-                bitLen += static_cast<uint64_t>(take) * 8ULL;
-
-                if (bufLen == 64) {
-                    processBlock(buf);
-                    bufLen = 0;
-                }
-            }
-
-            // padding: 0x80 then zeros until 56 mod 64, then 64-bit big-endian bit length
-            buf[bufLen++] = 0x80U;
-            if (bufLen > 56) {
-                std::memset(buf + bufLen, 0, 64 - bufLen);
-                processBlock(buf);
-                bufLen = 0;
-            }
-            std::memset(buf + bufLen, 0, 56 - bufLen);
-            // append bit length as big-endian uint64 at end of last block
-            const uint64_t bits = bitLen;
-            for (int i = 0; i < 8; ++i) {
-                buf[56 + i] = static_cast<uint8_t>((bits >> (56 - i * 8)) & 0xFFU);
-            }
-            processBlock(buf);
-
             for (int i = 0; i < 8; ++i) {
                 outDigest[i * 4 + 0] = static_cast<uint8_t>((state[i] >> 24) & 0xFFU);
                 outDigest[i * 4 + 1] = static_cast<uint8_t>((state[i] >> 16) & 0xFFU);
                 outDigest[i * 4 + 2] = static_cast<uint8_t>((state[i] >> 8) & 0xFFU);
                 outDigest[i * 4 + 3] = static_cast<uint8_t>(state[i] & 0xFFU);
             }
-            return true;
         }
 
     } // namespace
 
-#endif
+    Sha256Hasher::Sha256Hasher()
+    {
+        Reset();
+    }
+
+    void Sha256Hasher::Reset()
+    {
+        std::memcpy(state_, detail::kInit, sizeof(state_));
+        std::memset(buf_, 0, sizeof(buf_));
+        bufLen_       = 0;
+        totalBitsLow_ = 0;
+    }
+
+    bool Sha256Hasher::Update(const uint8_t* data, size_t length)
+    {
+        if (length > 0 && data == nullptr) {
+            return false;
+        }
+        while (length > 0) {
+            const size_t take = std::min<size_t>(64 - bufLen_, length);
+            std::memcpy(buf_ + bufLen_, data, take);
+            bufLen_ += take;
+            data += take;
+            length -= take;
+            totalBitsLow_ += static_cast<uint64_t>(take) * 8ULL;
+
+            if (bufLen_ == 64) {
+                detail::compress(state_, buf_);
+                bufLen_ = 0;
+            }
+        }
+        return true;
+    }
+
+    bool Sha256Hasher::Final(uint8_t outDigest[32])
+    {
+        if (outDigest == nullptr) {
+            return false;
+        }
+        uint8_t pad[64]{};
+        size_t  padLen = bufLen_;
+        std::memcpy(pad, buf_, padLen);
+        pad[padLen++] = 0x80U;
+
+        if (padLen > 56) {
+            std::memset(pad + padLen, 0, 64 - padLen);
+            detail::compress(state_, pad);
+            padLen = 0;
+        }
+        std::memset(pad + padLen, 0, 56 - padLen);
+        const uint64_t bits = totalBitsLow_;
+        for (int i = 0; i < 8; ++i) {
+            pad[56 + i] = static_cast<uint8_t>((bits >> (56 - i * 8)) & 0xFFU);
+        }
+        detail::compress(state_, pad);
+        detail::digestFromState(state_, outDigest);
+        Reset();
+        return true;
+    }
 
     bool Sha256(const uint8_t* data, size_t length, uint8_t outDigest[32])
     {
@@ -163,46 +167,11 @@ namespace ZChatIM::crypto {
         if (length > 0 && data == nullptr) {
             return false;
         }
-#ifdef _WIN32
-        BCRYPT_ALG_HANDLE hAlg = nullptr;
-        if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_SHA256_ALGORITHM, nullptr, 0))) {
+        Sha256Hasher h;
+        if (!h.Update(data, length)) {
             return false;
         }
-        BCRYPT_HASH_HANDLE hHash = nullptr;
-        DWORD              objLen = 0;
-        DWORD              cbData = 0;
-        if (!BCRYPT_SUCCESS(BCryptGetProperty(
-                hAlg, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&objLen), sizeof(DWORD), &cbData, 0))) {
-            BCryptCloseAlgorithmProvider(hAlg, 0);
-            return false;
-        }
-        std::vector<uint8_t> hashObj(static_cast<size_t>(objLen));
-        if (!BCRYPT_SUCCESS(BCryptCreateHash(hAlg, &hHash, hashObj.data(), objLen, nullptr, 0, 0))) {
-            BCryptCloseAlgorithmProvider(hAlg, 0);
-            return false;
-        }
-        constexpr size_t kChunk = static_cast<size_t>(1) << 28;
-        size_t           off    = 0;
-        while (off < length) {
-            const ULONG part = static_cast<ULONG>(std::min(kChunk, length - off));
-            if (!BCRYPT_SUCCESS(BCryptHashData(hHash, const_cast<PUCHAR>(data + off), part, 0))) {
-                BCryptDestroyHash(hHash);
-                BCryptCloseAlgorithmProvider(hAlg, 0);
-                return false;
-            }
-            off += part;
-        }
-        if (!BCRYPT_SUCCESS(BCryptFinishHash(hHash, outDigest, 32, 0))) {
-            BCryptDestroyHash(hHash);
-            BCryptCloseAlgorithmProvider(hAlg, 0);
-            return false;
-        }
-        BCryptDestroyHash(hHash);
-        BCryptCloseAlgorithmProvider(hAlg, 0);
-        return true;
-#else
-        return sha256_portable(data, length, outDigest);
-#endif
+        return h.Final(outDigest);
     }
 
 } // namespace ZChatIM::crypto

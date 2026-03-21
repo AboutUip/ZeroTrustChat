@@ -4,7 +4,9 @@
 
 ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义网络协议，基于 TLV 结构设计，支持端到端加密、文件传输、音视频通话等 IM 特性。
 
-详见 [01-Overview.md](../01-Architecture/01-Overview.md)
+详见 [01-Overview.md](01-Overview.md)。
+
+**读文档顺序建议**：先 **第三节 Header**（含 4 字节 `SessionID`）→ **第五节 MessageType** → **第六节 载荷** → **第七节 TLV**（与 第五节 **不同枚举**）。
 
 ---
 
@@ -67,6 +69,8 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 
 ## 五、消息类型 (MessageType)
 
+**本节**：`Header.MessageType`（1 字节）。**不是** Payload 里 TLV 的 `Type`；与 **第7.2节 TLV** 数值可能相同但语义无关——**易混字节见 第5.1节**。
+
 | Type | 名称 | 说明 |
 |------|------|------|
 | 0x01 | TEXT | 文本消息 |
@@ -86,12 +90,12 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 | 0x0F | GROUP_CREATE | 创建群组 |
 | 0x10 | GROUP_UPDATE | 群更新 |
 | 0x11 | GROUP_LEAVE | 退出群组 |
+| 0x12 | FRIEND_REQUEST | 好友请求 |
+| 0x13 | FRIEND_RESPONSE | 好友响应 |
 | 0x14 | GROUP_MUTE | 群禁言 |
 | 0x15 | GROUP_REMOVE | 群踢人 |
 | 0x16 | GROUP_TRANSFER_OWNER | 群主转让 |
 | 0x17 | GROUP_JOIN_REQUEST | 入群申请 |
-| 0x12 | FRIEND_REQUEST | 好友请求 |
-| 0x13 | FRIEND_RESPONSE | 好友响应 |
 | 0x18 | DELETE_FRIEND | 删除好友 |
 | 0x19 | FRIEND_NOTE_UPDATE | 好友备注更新 |
 | 0x1A | RESUME_TRANSFER | 文件续传 |
@@ -102,6 +106,17 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 | 0x82 | LOGOUT | 登出 |
 | 0x83 | SYNC | 消息同步 |
 | 0xFE | CUSTOM | 自定义消息 |
+
+### 5.1 与 第7.2节 TLV「同字节不同义」（速查）
+
+| 字节 | **MessageType（第五节，在 ZSP 头里）** | **TLV Type（第7.2节，在 Payload 扩展里）** |
+|:----:|--------------------------------------|----------------------------------------|
+| **0x10** | `GROUP_UPDATE` | `MessageReply` |
+| **0x11** | `GROUP_LEAVE` | `MessageRecall` |
+| **0x12** | `FRIEND_REQUEST` | `MessageEdit` |
+| **0x15** | `GROUP_REMOVE` | `Mention` |
+
+**0x20**：仅出现在 **第7.2节**（`GroupName` TLV）；**第五节** 无对应 `MessageType`。
 
 ---
 
@@ -210,6 +225,8 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 ```
 
 ### 7.2 标准扩展类型 (0x10-0x7F)
+
+**与 第五节区分**：本节为 **载荷内 TLV 扩展** 的 `Type` 字节；与 **ZSP 消息头 `MessageType`**（第五节）是**两套枚举**，数值**可以相同**（例如 **0x15** 在 第五节为 `GROUP_REMOVE`，在 第七节为 `Mention` TLV）但**不得混用**。
 
 | Type | 名称 | 说明 |
 |------|------|------|

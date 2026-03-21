@@ -1,5 +1,7 @@
 # 好友验证技术规范
 
+> **冲突处理**：**`MM2::StoreFriendRequest` / `UpdateFriendRequestStatus` / `DeleteFriendRequest` / `CleanupExpiredFriendRequests` 已落 SQLite 表 `friend_requests`**（**`user_version=4`**，见 **`03-Storage.md` 第2.6节**、**`05` 第2.1节**）。**签名校验**仍须在 **MM1 / JNI** 路径完成（**`01-JNI.md`**）；**`MM2` 不验证 Ed25519**。下文含 **产品与协议目标**。
+
 ## 一、请求流程
 
 ```
@@ -82,12 +84,13 @@
 
 ## 六、过期机制
 
-| 项目 | 值 |
-|------|-----|
-| 存储位置 | MM2 内存 |
-| 过期时间 | 7天 |
-| 过期处理 | 自动删除 |
-| 服务重启 | 请求丢失 |
+| 项目 | **目标（落地后）** | **当前 C++** |
+|------|-------------------|--------------|
+| 存储位置 | MM2 **SQLite** **`friend_requests`** | **已实现**（**`MM2` API**） |
+| 过期时间 | 7 天（产品） | **`CleanupExpiredFriendRequests` / `CleanupExpiredData`**：当前策略 **pending 超 30 天**（秒级），可调（**`05` 第2.2节**） |
+| 服务重启 | 持久化后 **不丢** | **库在则记录在**（除非删库 / 清理 API） |
+
+**禁止**：写「好友请求仅存 **MM2 内存**、重启必丢」——与 **目标落库** 及 **文件分片已落盘** 的模块边界混淆。
 
 ## 七、状态流转
 

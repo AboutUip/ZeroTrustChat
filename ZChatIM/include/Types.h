@@ -130,6 +130,7 @@ namespace ZChatIM
     // =============================================================
 
     constexpr size_t ZDB_FILE_SIZE       = 5 * 1024 * 1024;
+    // 以下两项为规范预留；当前 `ZdbManager` 实现未强制分卷个数上下限（见 docs/02-Core/04-ZdbBinaryLayout.md 第5节）。
     constexpr size_t ZDB_MIN_FILES       = 5;
     constexpr size_t ZDB_MAX_FILES       = 2000;
     constexpr size_t ZDB_MAX_WRITE_SIZE  = 500 * 1024;

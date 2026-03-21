@@ -2,9 +2,9 @@
 
 说明：本文档面向 **`ZChatIM/include/jni/JniInterface.h`** 与 **`ZChatIM/include/jni/JniBridge.h`**（对外方法名、顺序、签名须一致：`JniInterface` 为 static 门面，`JniBridge` 为进程内单例桥接），作为 “Java → JNI → C++(MM1/MM2)” 触发入口契约的详细说明。文档以安全不变量为优先，重点写清楚每个 API 的职责、必须遵守的安全校验/落点路由、入参语义、返回语义、以及实现规划。
 
-**概要表（含 `C++` 列严格对照）**：仓库根目录 **`docs/06-Appendix/01-JNI.md`**。修改契约时须 **该表、本文、两头文件** 四方同步。
+**概要表（含 `C++` 列严格对照）**：**`docs/06-Appendix/01-JNI.md`**。修改契约时须 **该表、本文、`JniInterface.h`、`JniBridge.h`** 四方同步。构建见 **`docs/07-Engineering/01-Build-ZChatIM.md`**。
 
-**章节对应（严格）**：`01-JNI.md` 零〜十二节 ↔ 本文 §2.0〜§2.10 及 §1；其中「十、安全模块」拆为本文 §2.9 中密钥/运维/证书/注销/好友备注等小节。
+**章节对应（严格）**：`01-JNI.md` 零〜十二节 ↔ 本文 第2.0节至第2.10节 及 第1节；其中「十、安全模块」拆为本文 第2.9节 中密钥/运维/证书/注销/好友备注等小节。
 
 ## 0. 总体边界与路由原则
 本系统存在明确的信任边界：JNI/Java 属于不可信区，MM1/MM2 属于可信区。JniBridge 必须把每个 JNI 触发入口路由到对应的 MM1 或 MM2 管理器契约，不能在 JniBridge 中“绕过 MM1 签名/权限校验，直接调用 MM2 存储能力”。
@@ -115,8 +115,8 @@
 #### `getUnreadSessionMessageIds(callerSessionId, imSessionId, limit) -> array<messageId>`
 职责：获取会话未读消息 ID 列表（供客户端展示未读队列或驱动同步）。
 入参：`callerSessionId`、`imSessionId`、`limit`。
-返回：消息 ID 列表（二维数组，每个元素为 messageId bytes）。
-路由实现规划：调用 `mm2::MM2::GetUnreadSessionMessages(...)` 并映射为 JNI 返回结构。
+返回：消息 ID 列表（二维数组，每个元素为 **16B `messageId`**）。
+路由实现规划：调用 `mm2::MM2::GetUnreadSessionMessages(sessionId, limit, outPairs)` 后，**仅将 `messageId` 压入 JNI 返回值**（**`outPairs[i].second`** 当前恒为 **0**，占位）。**MM2 已实现**（**`im_messages.read_at_ms`**）；**`JniBridge`/`ZChatIMJNI` 仍待接线**，见 **`05-ZChatIM-Implementation-Status.md` 第4节 / 第7.2节**。
 
 #### `storeMessageReplyRelation(callerSessionId, messageId, repliedMsgId, repliedSenderId, repliedContentDigest, senderId, signatureEd25519) -> true/false`
 职责：存储“回复关系”链路（reply TLV 0x10 对应）。
@@ -314,30 +314,30 @@
 
 `validateJniCall(jniEnv, jclass) -> true/false`（`JniInterface`/`JniBridge` 以 `void*` 承载指针，避免头文件依赖 `jni.h`）
 职责：**优先在 JNI 入口使用**：将 env/class 转交 `mm1::MM1::ValidateJniCall(env, class)`（或等价 `JniSecurity` 校验）。
-无参版本仅可作为退化路径（如单元测试或非 JNI 调用方），不得作为唯一安全边界。
+无参版本仅可作为退化路径（如非 JNI 调用方），不得作为唯一安全边界。
 
 ## 3. 规划的实现（实现闭环的建议步骤）
 本节给出可执行的实现规划，用来保证“接口闭环 + 安全不变量 + StorageIntegrity + SQLite 校验闭环”同时满足。
 
 ### 3.1 阶段一：路由与安全落点固定
 1. 在 `JniBridge` 每个 JNI 方法里：先 `std::lock_guard` 持 `m_apiRecursiveMutex`；对非 `Initialize`/`Cleanup`/`Auth`/`VerifySession`/`ValidateJniCall*` 入口，先校验 `callerSessionId`（`VerifySession` + principal 绑定），再明确调用链路进入 MM1 manager 完成校验，最后进入 MM2 存储。
-2. 为每个“禁止项”建立单元测试用例（例如直接调用 MM2 删除是否会绕过签名）。
-3. 为 `RecallMessage/DeleteMessage`、`Mention`、`FriendVerify`、`StoreMessageReplyRelation` 建立“签名错误时必须失败”的测试矩阵。
+2. 对每个“禁止项”在**安全评审与联调**中验证（例如直接调用 MM2 删除是否会绕过签名）。
+3. 对 `RecallMessage/DeleteMessage`、`Mention`、`FriendVerify`、`StoreMessageReplyRelation` 等路径验证：**签名错误时必须失败**。
 
 ### 3.2 阶段二：StorageIntegrity + SQLite 完整性校验闭环
-1. 实现 `StorageIntegrityManager::ComputeSha256/RecordDataBlockHash/VerifyDataBlockHash`（底层已落至 **`mm2::SqliteMetadataDb`**：`UpsertDataBlock` / `GetDataBlock`；详见仓库根目录 **`docs/02-Core/03-Storage.md`** §七）。
+1. 实现 `StorageIntegrityManager::ComputeSha256/RecordDataBlockHash/VerifyDataBlockHash`（底层已落至 **`mm2::SqliteMetadataDb`**：`UpsertDataBlock` / `GetDataBlock`；详见仓库根目录 **`docs/02-Core/03-Storage.md`** 第七节）。
 2. 在 `MM2::StoreFileChunk` 写入成功后调用 `RecordDataBlockHash`（需先 `Bind` 元数据库并完成 `UpsertZdbFile` 等外键前提）。
 3. 在 `MM2::GetFileChunk` 读取成功后调用 `VerifyDataBlockHash`，并对 outMatch=false 的策略进行明确化（返回失败或标记失效）。
-4. **`BlockIndex` 规划**与 **`SqliteMetadataDb` 现状**：表结构、事务与 `dataId`+`chunk_idx` 的查询/校验应以 **`03-Storage.md` §二、§2.6** 及 **`SqliteMetadataDb`** 为准；`BlockIndex` 接入时应委托或复用该层，避免重复/schema 漂移。
+4. **`BlockIndex` 规划**与 **`SqliteMetadataDb` 现状**：表结构、事务与 `dataId`+`chunk_idx` 的查询/校验应以 **`03-Storage.md` 第二节、第2.6节** 及 **`SqliteMetadataDb`** 为准；`BlockIndex` 接入时应委托或复用该层，避免重复/schema 漂移。
 
 ### 3.3 阶段三：并发与事务一致性
 1. 保证 `.zdb` 的文件锁策略与 SQLite 事务策略一致，避免写入 .zdb 成功但 SQLite 记录失败造成状态不一致。
-2. 对 BEGIN EXCLUSIVE 等事务模式在多线程下进行测试。
+2. 对 **BEGIN EXCLUSIVE** 等事务模式在多线程负载下进行**集成验证**。
 
-### 3.4 阶段四：消息特性回归测试
-1. 消息撤回/删除：验证 Level2 覆写后消息 UI 逻辑（本地标记撤回，不显示内容）。
-2. 编辑：验证编辑窗口与 editCount 上限。
-3. 回复链路：验证删除/撤回后回复关系摘要仍可读。
+### 3.4 阶段四：消息特性联调验收
+1. 消息撤回/删除：Level2 覆写后与客户端展示策略一致（本地标记撤回等）。
+2. 编辑：**editCount** 上限与编辑窗口行为符合功能规范。
+3. 回复链路：删除/撤回后回复关系摘要仍可读。
 
 ### 3.5 阶段五：文档与契约一致性验证
 1. 每次修改 `.h` 契约后，必须同步更新 `docs/06-Appendix/01-JNI.md`。

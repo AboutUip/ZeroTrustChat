@@ -1,4 +1,4 @@
-// Storage integrity: SHA-256 over bytes + data_blocks row in SqliteMetadataDb (03-Storage.md §5).
+// Storage integrity: SHA-256 over bytes + data_blocks row in SqliteMetadataDb (03-Storage.md 第五节).
 
 #include "mm2/storage/StorageIntegrityManager.h"
 #include "mm2/crypto/Sha256.h"

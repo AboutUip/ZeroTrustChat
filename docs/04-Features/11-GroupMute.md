@@ -1,10 +1,15 @@
 # 群组禁言技术规范
 
+> **文档类型**：**产品与 MM1 权限模型**；禁言状态**不**由 MM2 **`im_messages`** 表达。  
+> **JNI**：**`docs/06-Appendix/01-JNI.md`**「六、群聊安全特性」——`MuteMember`、`IsMuted`、`UnmuteMember`。  
+> **实现状态**：**`05-ZChatIM-Implementation-Status.md` 第3节** — MM1 **`GroupMuteManager` 等多数无 `.cpp`**；**native 桥未接**。  
+> **ZSP**：禁言信令消息类型为 **`0x14` `GROUP_MUTE`**（**`02-ZSP-Protocol.md` 第五节**）。
+
 ## 一、禁言流程
 
 ```
 群主/管理员禁言成员:
-1. 发送 GROUP_MUTE
+1. 发送 GROUP_MUTE（ZSP MessageType **0x14**）
 2. 指定成员ID和禁言时长
 3. MM1 记录禁言状态
 4. 广播通知
@@ -60,6 +65,8 @@
 4. 未禁言 → 正常发送
 ```
 
+**与 MM2**：校验通过后客户端仍可调用 **`MM2::StoreMessage`**；**禁言须在 MM1/服务端拦截**，不可仅靠客户端。
+
 ## 六、权限级别
 
 | 操作 | 群主 | 管理员 | 普通成员 |
@@ -76,3 +83,24 @@
 2. 通知群主/管理员
 3. 群内其他成员不可见
 ```
+
+---
+
+## 八、JNI 摘要
+
+| 方法 | 说明 |
+|------|------|
+| `MuteMember` | `caller`、`groupId`、`userId`、`mutedBy`、时间窗、`reason`；须校验角色 |
+| `IsMuted` | JNI 仅 **bool**；内部可有剩余时长 **out**（见 **`01-JNI.md`** 表注） |
+| `UnmuteMember` | `caller`、`unmutedBy` |
+
+---
+
+## 九、相关文档
+
+| 文档 | 用途 |
+|------|------|
+| [02-ZSP-Protocol.md](../01-Architecture/02-ZSP-Protocol.md) | **0x14 GROUP_MUTE** |
+| [01-JNI.md](../06-Appendix/01-JNI.md) | 完整 JNI 表 |
+| [05-ZChatIM-Implementation-Status.md](../02-Core/05-ZChatIM-Implementation-Status.md) | MM1 进度 |
+| [03-Storage.md](../02-Core/03-Storage.md) | MM2 表结构（与禁言记录分离） |

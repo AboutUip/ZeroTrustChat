@@ -22,9 +22,10 @@ Member Key (成员加密密钥) → .zdb 存储 (公钥加密)
 
 ## 三、.zdb 分片规则
 
-- 文件大小: 5MB
-- 单次写入: ≤500KB
-- 存储结构: 按成员ID分片存储
+- 文件大小: 5MB（**`ZDB_FILE_SIZE`**）
+- 单次写入: ≤500KB（**`ZDB_MAX_WRITE_SIZE`**）
+- **v1 物理写入**：各 `.zdb` 卷 **尾部追加**（非随机洞位），见 **`docs/02-Core/04-ZdbBinaryLayout.md`**
+- 存储结构（产品）: 按成员 ID 等逻辑分片；与 MM2 **`data_blocks`/`file_id`** 索引配合
 
 ## 四、加密流程
 

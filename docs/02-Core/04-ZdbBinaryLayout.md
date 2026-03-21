@@ -8,9 +8,10 @@
 |----|---------|
 | 文件总长 | 固定 **`ZDB_FILE_SIZE`**（当前 **5 MiB**，与 `Types.h` 一致） |
 | 头部 | **64 字节** `ZdbHeader`，其后为 **payload** 区 |
-| 写入路径 | **仅尾部追加**（`AppendRaw` / `ZdbManager::WriteData`）；**无加密**、无空闲块回收表 |
+| 写入路径 | **仅尾部追加**（`AppendRaw` / `ZdbManager::WriteData`）；**容器层无加密**、无空闲块回收表（payload 可为**明文分片**或 **MM2 `StoreMessage` 写入的 AES-GCM 密文包**，语义见 **`03-Storage.md` 第七节 / 第2.6节**） |
 | 头部校验域 | `checksum[32]` 预留，v1 填 **0** |
-| 尾部 | 创建时头之后至文件尾预填 **0x00**，便于十六进制查看 |
+| 尾部 | 创建时头之后至文件尾用 **`Crypto::GenerateSecureRandom`** 预填**高熵字节**（**Windows：BCrypt**；**Unix：`RAND_bytes`** + **`/dev/urandom`** 后备）；**`AllocateSpace` / `DeleteData` 等预留区仍写 0x00**（见 `ZdbFile`） |
+| 打开校验 | **`ZdbFile::Open` / `Create`**：`version==1`，**磁盘文件字节数**须等于 **`header.totalSize`**（即 **`ZDB_FILE_SIZE`**），**`usedSize`** 须在 **`[64, totalSize]`** |
 
 ## 2. `ZdbHeader`（64 字节，`#pragma pack(push, 1)`）
 
@@ -22,8 +23,8 @@
 | 0x04 | 1 | **`version`**：v1 = **1** |
 | 0x05 | 7 | **`reserved`**：v1 填 **0** |
 | 0x0C | 4 | **`padding`**：v1 填 **0** |
-| 0x10 | 8 | **`totalSize`**：`uint64_t`，等于文件总长度（通常为 `ZDB_FILE_SIZE`） |
-| 0x18 | 8 | **`usedSize`**：`uint64_t`，**已用逻辑长度**；含本 64 字节头，即 payload 从 **`usedSize` 上一次追加结束位置** 开始增长；初始创建后为 **64** |
+| 0x10 | 8 | **`totalSize`**：`uint64_t`，**必须等于**文件总长度；实现上 **`ReadHeader` 强制 `totalSize == ZDB_FILE_SIZE`**（与 `Types.h` 一致） |
+| 0x18 | 8 | **`usedSize`**：`uint64_t`，**逻辑已用尾边界**（含 64 字节头）；下一条 **`AppendRaw`** 从 **`usedSize`** 起写；初始创建后为 **64** |
 | 0x20 | 32 | **`checksum`**：v1 全 **0** |
 
 `static_assert(sizeof(ZdbHeader) == 64)`（见 `ZdbFile.cpp`）。
@@ -32,15 +33,27 @@
 
 - **有效范围**：`[64, totalSize)`。
 - **第一条追加记录**起点偏移为 **64**（此时创建后 `usedSize == 64`，追加后 `usedSize == 64 + length`）。
-- 读取/校验时，**元数据**（`SqliteMetadataDb` / `StorageIntegrityManager`）中的 **`offset` / `length`** 指 payload 区内字节范围（可与头64分开存，也可从 64 起算，须与写入约定一致；当前自检用 **`offset == 64`** 表示首条 payload）。
+- 读取/校验时，**元数据**（`SqliteMetadataDb` / `StorageIntegrityManager`）中的 **`offset` / `length`** 指 payload 区内字节范围（可与头 64 分开存，也可从 64 起算，须与写入约定一致；**首条 payload 常见 `offset == 64`**）。
+- **opaque 内容**：`data_blocks.length` 字节可为任意八位组。文件分片路径下与磁盘字节一致；**`MM2::StoreMessage`** 路径下为 **`nonce(12) ‖ ciphertext ‖ tag(16)`**（与 `03-Storage.md` 一致），**SHA-256 校验仍针对该不透明字节串**，与「容器不加密、应用可内联密文」一致。
 
 ## 4. 与 SQLite 索引的关系
 
 - `zdb_files`：`file_id` 与磁盘文件名一致；`total_size` / `used_size` 应与头内 `totalSize` / `usedSize` 语义一致（由上层在写入后维护）。
-- `data_blocks`：`data_id`（16 字节）、`file_id`、`offset`、`length`、`sha256` 描述一块 payload；**v1** 不加密时 `ComputeSha256` 可直接针对该区间。
+- `data_blocks`：`data_id`（16 字节）、`file_id`、`offset`、`length`、`sha256` 描述一块 payload；**`ComputeSha256` / 校验始终针对磁盘上该区间原始字节**（明文分片或 **StoreMessage** 密文包，不在此层区分）。
+- **文件分片（`MM2::StoreFileChunk`）**：`data_id` **不是** 传输层 `fileId` 字符串本身，而是 **`SHA256(fileId 原始字节 ‖ chunkIndex 小端 u32)` 截断前 16 字节**（见 **`03-Storage.md` 第七节 `MM2` 行**）。`chunk_idx` 与 `chunkIndex` 一致；单次写入仍受 **`ZDB_MAX_WRITE_SIZE`** 约束（经 `ZdbManager::WriteData`）。
 
-## 5. 参考代码路径
+## 5. 与 `Types.h` 其它常量
+
+- **`ZDB_MAX_WRITE_SIZE`**：`ZdbManager::WriteData` 单次 `length` 上限；**`MM2::StoreFileChunk`** 亦受此限（整段分片须一次写入）。
+- **`ZDB_MIN_FILES` / `ZDB_MAX_FILES`**：仍为规范/预留常量；**当前 `ZdbManager` 未按个数强制启停分卷**（仅 `SelectFile` + 按需 `CreateNewFileUnlocked`）。
+
+## 6. `ZdbManager` 行为摘要（与实现一致）
+
+- **`file_id`**：磁盘上的**单层文件名**；实现拒绝含 `/`、`\`、`..` 的 `fileId`（防 `dataDir` 路径逃逸）。
+- **`AllocateSpace`**：在管理器互斥锁内**写入全 0** 完成预留（非仅返回偏移），避免 TOCTOU。
+- **并发**：`ZdbManager` 公开 API 由 `m_mutex` 串行化；`SqliteMetadataDb` **非**线程安全（见该头文件注释）。
+
+## 7. 参考代码路径
 
 - `include/mm2/storage/ZdbFile.h`、`src/mm2/storage/ZdbFile.cpp`
 - `include/mm2/storage/ZdbManager.h`、`src/mm2/storage/ZdbManager.cpp`
-- 自检：`ZChatIM --test` 中 **ZDB v1** 相关用例（见 `tests/mm1_managers_test.cpp`）。

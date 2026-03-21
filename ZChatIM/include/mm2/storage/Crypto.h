@@ -17,6 +17,10 @@ namespace ZChatIM
             // =============================================================
             // 初始化
             // =============================================================
+            // **平台后端**：**Windows** — **BCrypt**（AES-GCM / PBKDF2 / RNG 链 + **CryptoAPI** 随机后备）。**Linux / macOS** — **OpenSSL 3 libcrypto**（**`EVP_aes_256_gcm`** / **`PKCS5_PBKDF2_HMAC`** / **`RAND_bytes`** + **`/dev/urandom`** 后备）。须与 **`MM2::Cleanup` / `CleanupUnlocked`** 中 **`Cleanup()`** 成对调用（由 MM2 编排）。
+            // **磁盘格式**：**nonce(12) ‖ ciphertext ‖ tag(16)**，**Windows 与 Unix 字节级一致**（算法同为 AES-256-GCM）。
+            // **构建**：**Windows** 链接 **bcrypt、advapi32**；**非 Windows** **`find_package(OpenSSL 3.0)`** + **`OpenSSL::Crypto`**。
+            // **调用约定**：**`EncryptMessage` / `DecryptMessage` / `DeriveKey`** 要求 **`Init()` 已成功**（**`s_initialized`**）；**`GenerateSecureRandom` / `HashSha256`** **不**检查该标志（**`ZdbFile::Create`**、**`StoreFriendRequest`** 等可在 **`Init`** 前取随机；**`HashSha256`** 为便携 **`crypto::Sha256`**）。
             
             // 初始化加密库
             static bool Init();
@@ -51,10 +55,10 @@ namespace ZChatIM
             // =============================================================
             
             // 生成随机密钥
-            static std::vector<uint8_t> GenerateKey(size_t keyLen = CRYPTO_KEY_SIZE);
+            static std::vector<uint8_t> GenerateKey(size_t keyLen = ZChatIM::CRYPTO_KEY_SIZE);
             
             // 生成随机Nonce
-            static std::vector<uint8_t> GenerateNonce(size_t nonceLen = NONCE_SIZE);
+            static std::vector<uint8_t> GenerateNonce(size_t nonceLen = ZChatIM::NONCE_SIZE);
             
             // 派生密钥
             static bool DeriveKey(

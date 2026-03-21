@@ -1,10 +1,11 @@
 #pragma once
 
 #include "Types.h"
-#include <string>
 #include <cstdint>
 #include <fstream>
 #include <mutex>
+#include <string>
+#include <vector>
 
 namespace ZChatIM
 {
@@ -12,6 +13,8 @@ namespace ZChatIM
     {
         // =============================================================
         // ZDB文件
+        // =============================================================
+        // 并发：公开 API 使用 `std::recursive_mutex`（Create/Open 会调用 Close）。
         // =============================================================
         
         class ZdbFile {
@@ -119,7 +122,8 @@ namespace ZChatIM
             std::string m_filePath;     // 文件路径
             std::fstream m_file;        // 文件流
             ZdbHeader m_header;         // 文件头
-            mutable std::mutex m_mutex; // 互斥锁
+            // recursive：Create/Open 在已持锁时调用 Close()，避免自死锁
+            mutable std::recursive_mutex m_mutex;
             std::string m_lastError;
 
             // 空间管理（v1：仅追加，空闲表未使用）

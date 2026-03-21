@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <random>
 #include <sstream>
+#include <string_view>
+#include <vector>
 
 namespace ZChatIM::mm2 {
 
@@ -17,13 +19,24 @@ namespace ZChatIM::mm2 {
             return name.size() >= 4 && name.compare(name.size() - 4, 4, ".zdb") == 0;
         }
 
+        // 仅允许「单层文件名」：禁止路径分隔符与 ".."，避免 BuildFilePath 逃逸 dataDir
+        bool IsSafeZdbFileId(const std::string& fileId)
+        {
+            if (fileId.empty() || fileId.size() > 512) {
+                return false;
+            }
+            if (fileId.find_first_of("/\\") != std::string::npos) {
+                return false;
+            }
+            if (fileId.find("..") != std::string::npos) {
+                return false;
+            }
+            return true;
+        }
+
     } // namespace
 
-    ZdbManager::ZdbManager()
-        : m_totalUsedSpace(0)
-        , m_totalAvailableSpace(0)
-    {
-    }
+    ZdbManager::ZdbManager() = default;
 
     ZdbManager::~ZdbManager()
     {
@@ -39,23 +52,7 @@ namespace ZChatIM::mm2 {
         }
         m_files.clear();
         m_fileList.clear();
-        m_totalUsedSpace      = 0;
-        m_totalAvailableSpace = 0;
         m_dataDir.clear();
-    }
-
-    void ZdbManager::RefreshTotalsLocked()
-    {
-        m_totalUsedSpace      = 0;
-        m_totalAvailableSpace = 0;
-        for (const auto& id : m_fileList) {
-            auto it = m_files.find(id);
-            if (it == m_files.end() || !it->second) {
-                continue;
-            }
-            m_totalUsedSpace += it->second->GetUsedSpace();
-            m_totalAvailableSpace += it->second->GetAvailableSpace();
-        }
     }
 
     bool ZdbManager::CheckDirectory()
@@ -98,25 +95,34 @@ namespace ZChatIM::mm2 {
     {
         m_files.clear();
         m_fileList.clear();
-        m_totalUsedSpace      = 0;
-        m_totalAvailableSpace = 0;
 
         std::error_code ec;
         if (!std::filesystem::exists(m_dataDir, ec)) {
             return true;
         }
 
-        for (const auto& entry : std::filesystem::directory_iterator(m_dataDir, ec)) {
+        std::filesystem::directory_iterator it(m_dataDir, ec);
+        if (ec) {
+            m_lastError = "ScanExistingFiles list dir: " + ec.message();
+            return false;
+        }
+        const std::filesystem::directory_iterator end;
+        for (; it != end; it.increment(ec)) {
             if (ec) {
-                m_lastError = "directory_iterator: " + ec.message();
+                m_lastError = "ScanExistingFiles iterate: " + ec.message();
                 return false;
             }
+            const std::filesystem::directory_entry& entry = *it;
             if (!entry.is_regular_file()) {
                 continue;
             }
             const std::string fname = entry.path().filename().string();
             if (!EndsWithZdb(fname)) {
                 continue;
+            }
+            if (!IsSafeZdbFileId(fname)) {
+                m_lastError = "ScanExistingFiles: unsafe file name in data dir";
+                return false;
             }
             auto zf = std::make_shared<ZdbFile>();
             if (!zf->Open(entry.path().string())) {
@@ -128,7 +134,6 @@ namespace ZChatIM::mm2 {
         }
 
         std::sort(m_fileList.begin(), m_fileList.end());
-        RefreshTotalsLocked();
         return true;
     }
 
@@ -148,7 +153,6 @@ namespace ZChatIM::mm2 {
         m_fileList.push_back(name);
         std::sort(m_fileList.begin(), m_fileList.end());
         outFileId = name;
-        RefreshTotalsLocked();
         return true;
     }
 
@@ -193,6 +197,10 @@ namespace ZChatIM::mm2 {
             m_lastError = "ZdbManager not initialized";
             return false;
         }
+        if (!IsSafeZdbFileId(fileId)) {
+            m_lastError = "OpenFile: invalid fileId";
+            return false;
+        }
         if (m_files.count(fileId) != 0) {
             return true;
         }
@@ -211,7 +219,6 @@ namespace ZChatIM::mm2 {
             m_fileList.push_back(fileId);
             std::sort(m_fileList.begin(), m_fileList.end());
         }
-        RefreshTotalsLocked();
         return true;
     }
 
@@ -219,6 +226,10 @@ namespace ZChatIM::mm2 {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_lastError.clear();
+        if (!IsSafeZdbFileId(fileId)) {
+            m_lastError = "CloseFile: invalid fileId";
+            return false;
+        }
         auto it = m_files.find(fileId);
         if (it == m_files.end()) {
             m_lastError = "CloseFile: not open";
@@ -229,7 +240,6 @@ namespace ZChatIM::mm2 {
         }
         m_files.erase(it);
         m_fileList.erase(std::remove(m_fileList.begin(), m_fileList.end(), fileId), m_fileList.end());
-        RefreshTotalsLocked();
         return true;
     }
 
@@ -253,7 +263,6 @@ namespace ZChatIM::mm2 {
             m_lastError = "DeleteFile: remove failed: " + ec.message();
             return false;
         }
-        RefreshTotalsLocked();
         return true;
     }
 
@@ -288,11 +297,11 @@ namespace ZChatIM::mm2 {
             m_lastError = "ZdbManager not initialized";
             return false;
         }
-        if (dataId.size() != MESSAGE_ID_SIZE) {
+        if (dataId.size() != ZChatIM::MESSAGE_ID_SIZE) {
             m_lastError = "WriteData: dataId must be MESSAGE_ID_SIZE (16) bytes";
             return false;
         }
-        if (length > ZDB_MAX_WRITE_SIZE) {
+        if (length > ZChatIM::ZDB_MAX_WRITE_SIZE) {
             m_lastError = "WriteData: length exceeds ZDB_MAX_WRITE_SIZE";
             return false;
         }
@@ -325,7 +334,6 @@ namespace ZChatIM::mm2 {
         }
         outFileId = hostId;
         outOffset = off;
-        RefreshTotalsLocked();
         (void)dataId; // v1: logical id reserved for metadata layer
         return true;
     }
@@ -336,6 +344,10 @@ namespace ZChatIM::mm2 {
         m_lastError.clear();
         if (m_dataDir.empty()) {
             m_lastError = "ZdbManager not initialized";
+            return false;
+        }
+        if (!IsSafeZdbFileId(fileId)) {
+            m_lastError = "ReadData: invalid fileId";
             return false;
         }
         auto it = m_files.find(fileId);
@@ -354,6 +366,10 @@ namespace ZChatIM::mm2 {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_lastError.clear();
+        if (!IsSafeZdbFileId(fileId)) {
+            m_lastError = "DeleteData: invalid fileId";
+            return false;
+        }
         auto it = m_files.find(fileId);
         if (it == m_files.end() || !it->second) {
             m_lastError = "DeleteData: file not open";
@@ -363,7 +379,6 @@ namespace ZChatIM::mm2 {
             m_lastError = it->second->LastError();
             return false;
         }
-        RefreshTotalsLocked();
         return true;
     }
 
@@ -398,14 +413,37 @@ namespace ZChatIM::mm2 {
             m_lastError = it->second->LastError();
             return false;
         }
+        // v1：`ZdbFile::AllocateSpace` 仅校验不推进 usedSize；在持锁期间写入零字节，避免返回后 TOCTOU
+        if (size > 0) {
+            const size_t                   kChunk = ZChatIM::FILE_CHUNK_SIZE;
+            std::vector<uint8_t>           zeros(std::min(size, kChunk), 0);
+            uint64_t                       pos    = off;
+            size_t                         remain = size;
+            while (remain > 0) {
+                const size_t n = static_cast<size_t>(
+                    std::min<uint64_t>(remain, zeros.size()));
+                if (!it->second->WriteData(pos, zeros.data(), n)) {
+                    m_lastError = it->second->LastError();
+                    return false;
+                }
+                pos += n;
+                remain -= n;
+            }
+        }
         outFileId = hostId;
         outOffset = off;
         return true;
     }
 
-    bool ZdbManager::FreeSpace(const std::string& /*fileId*/, uint64_t /*offset*/, size_t /*size*/)
+    bool ZdbManager::FreeSpace(const std::string& fileId, uint64_t /*offset*/, size_t /*size*/)
     {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!fileId.empty() && !IsSafeZdbFileId(fileId)) {
+            m_lastError = "FreeSpace: invalid fileId";
+            return false;
+        }
         // v1: no free list
+        (void)fileId;
         return true;
     }
 
@@ -457,6 +495,9 @@ namespace ZChatIM::mm2 {
     bool ZdbManager::GetFileStatus(const std::string& fileId, size_t& usedSpace, size_t& availableSpace) const
     {
         std::lock_guard<std::mutex> lock(m_mutex);
+        if (!IsSafeZdbFileId(fileId)) {
+            return false;
+        }
         auto it = m_files.find(fileId);
         if (it == m_files.end() || !it->second) {
             return false;
@@ -483,7 +524,8 @@ namespace ZChatIM::mm2 {
 
     bool ZdbManager::CleanupExpiredFiles()
     {
-        // v1: policy not wired
+        std::lock_guard<std::mutex> lock(m_mutex);
+        // v1: policy not wired；持锁与其它 API 一致，避免与 Initialize/Cleanup 竞态
         return true;
     }
 

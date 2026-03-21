@@ -1,6 +1,7 @@
 // .zdb container v1: 64-byte ZdbHeader + raw payload (see docs/02-Core/04-ZdbBinaryLayout.md).
 
 #include "mm2/storage/ZdbFile.h"
+#include "mm2/storage/Crypto.h"
 #include "Types.h"
 
 #include <algorithm>
@@ -55,6 +56,18 @@ namespace ZChatIM::mm2 {
             m_lastError = "invalid ZDB magic";
             return false;
         }
+        if (m_header.version != 1) {
+            m_lastError = "unsupported ZDB version (v1 expected)";
+            return false;
+        }
+        if (m_header.totalSize != static_cast<std::uint64_t>(ZChatIM::ZDB_FILE_SIZE)) {
+            m_lastError = "ZDB totalSize mismatch (expected ZDB_FILE_SIZE)";
+            return false;
+        }
+        if (m_header.usedSize < kHeaderBytes || m_header.usedSize > m_header.totalSize) {
+            m_lastError = "invalid ZDB usedSize";
+            return false;
+        }
         m_usedSpace = static_cast<size_t>(m_header.usedSize);
         return true;
     }
@@ -74,7 +87,7 @@ namespace ZChatIM::mm2 {
 
     bool ZdbFile::FillRandomData(uint64_t /*offset*/, size_t /*length*/)
     {
-        // v1: not used; file tail filled with 0x00 in Create (inspectable in hex tools).
+        // v1: unused on hot path; new file body fill is done in Create() via Crypto::GenerateSecureRandom.
         return true;
     }
 
@@ -92,7 +105,7 @@ namespace ZChatIM::mm2 {
 
     bool ZdbFile::Create(const std::string& filePath)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_lastError.clear();
         Close();
 
@@ -115,12 +128,18 @@ namespace ZChatIM::mm2 {
             return false;
         }
 
-        constexpr size_t                 kChunk = 65536;
-        std::vector<char>                zeros(kChunk, 0);
+        // 头之后至文件尾：用 CSPRNG 填满（与产品文档「随机噪声」一致；不依赖 Crypto::Init；Win=BCrypt 链，Unix=RAND/urandom）
+        const size_t kChunk = ZChatIM::FILE_CHUNK_SIZE;
         for (uint64_t pos = kHeaderBytes; pos < m_header.totalSize;) {
             const uint64_t remain = m_header.totalSize - pos;
             const size_t   n      = static_cast<size_t>(std::min<uint64_t>(remain, kChunk));
-            m_file.write(zeros.data(), static_cast<std::streamsize>(n));
+            std::vector<uint8_t> noise = Crypto::GenerateSecureRandom(n);
+            if (noise.size() != n) {
+                m_lastError = "ZdbFile::Create secure random fill failed (RNG)";
+                m_file.close();
+                return false;
+            }
+            m_file.write(reinterpret_cast<const char*>(noise.data()), static_cast<std::streamsize>(n));
             if (!m_file) {
                 m_lastError = "ZdbFile::Create fill body failed";
                 m_file.close();
@@ -140,13 +159,22 @@ namespace ZChatIM::mm2 {
             m_file.close();
             return false;
         }
+        {
+            std::error_code ec;
+            const auto      bytesOnDisk = std::filesystem::file_size(filePath, ec);
+            if (ec || static_cast<std::uint64_t>(bytesOnDisk) != m_header.totalSize) {
+                m_lastError = "ZdbFile::Create on-disk size mismatch header.totalSize";
+                m_file.close();
+                return false;
+            }
+        }
         m_freeSlots.clear();
         return true;
     }
 
     bool ZdbFile::Open(const std::string& filePath)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_lastError.clear();
         Close();
 
@@ -160,11 +188,19 @@ namespace ZChatIM::mm2 {
             m_file.close();
             return false;
         }
+        std::error_code ec;
+        const auto      bytesOnDisk = std::filesystem::file_size(filePath, ec);
+        if (ec || static_cast<std::uint64_t>(bytesOnDisk) != m_header.totalSize) {
+            m_lastError = "ZDB on-disk size mismatch header.totalSize";
+            m_file.close();
+            return false;
+        }
         return true;
     }
 
     void ZdbFile::Close()
     {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         if (m_file.is_open()) {
             m_file.flush();
             m_file.close();
@@ -174,12 +210,13 @@ namespace ZChatIM::mm2 {
 
     bool ZdbFile::IsOpen() const
     {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         return m_file.is_open();
     }
 
     bool ZdbFile::WriteData(uint64_t offset, const uint8_t* data, size_t length)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_lastError.clear();
         if (!m_file.is_open()) {
             m_lastError = "ZdbFile not open";
@@ -214,7 +251,7 @@ namespace ZChatIM::mm2 {
 
     bool ZdbFile::AppendRaw(const uint8_t* data, size_t length, uint64_t& outOffset)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_lastError.clear();
         outOffset = 0;
         if (!m_file.is_open()) {
@@ -248,7 +285,7 @@ namespace ZChatIM::mm2 {
 
     bool ZdbFile::ReadData(uint64_t offset, uint8_t* buffer, size_t length)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_lastError.clear();
         if (!m_file.is_open()) {
             m_lastError = "ZdbFile not open";
@@ -281,7 +318,7 @@ namespace ZChatIM::mm2 {
 
     bool ZdbFile::AllocateSpace(size_t size, uint64_t& outOffset)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         m_lastError.clear();
         outOffset = m_header.usedSize;
         if (static_cast<uint64_t>(size) > m_header.totalSize
@@ -294,13 +331,14 @@ namespace ZChatIM::mm2 {
 
     bool ZdbFile::FreeSpace(uint64_t /*offset*/, size_t /*size*/)
     {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         // v1: no free list
         return true;
     }
 
     size_t ZdbFile::GetAvailableSpace() const
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         if (m_header.usedSize >= m_header.totalSize) {
             return 0;
         }
@@ -309,25 +347,25 @@ namespace ZChatIM::mm2 {
 
     size_t ZdbFile::GetUsedSpace() const
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         return static_cast<size_t>(m_header.usedSize);
     }
 
     size_t ZdbFile::GetTotalSpace() const
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         return static_cast<size_t>(m_header.totalSize);
     }
 
     std::string ZdbFile::GetFilePath() const
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         return m_filePath;
     }
 
     std::string ZdbFile::GetFileId() const
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         if (m_filePath.empty()) {
             return {};
         }
@@ -341,8 +379,20 @@ namespace ZChatIM::mm2 {
 
     bool ZdbFile::IsCorrupted() const
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        return std::memcmp(m_header.magic, ZChatIM::MAGIC_ZDB, sizeof(m_header.magic)) != 0 || m_header.version == 0;
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        if (std::memcmp(m_header.magic, ZChatIM::MAGIC_ZDB, sizeof(m_header.magic)) != 0) {
+            return true;
+        }
+        if (m_header.version != 1) {
+            return true;
+        }
+        if (m_header.totalSize != static_cast<std::uint64_t>(ZChatIM::ZDB_FILE_SIZE)) {
+            return true;
+        }
+        if (m_header.usedSize < kHeaderBytes || m_header.usedSize > m_header.totalSize) {
+            return true;
+        }
+        return false;
     }
 
 } // namespace ZChatIM::mm2
