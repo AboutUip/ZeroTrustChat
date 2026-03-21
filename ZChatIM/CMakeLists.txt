@@ -58,6 +58,8 @@ add_library(ZChatIMCore STATIC
     src/mm2/crypto/Sha256.cpp
     src/mm2/storage/SqliteMetadataDb.cpp
     src/mm2/storage/StorageIntegrityManager.cpp
+    src/mm2/storage/ZdbFile.cpp
+    src/mm2/storage/ZdbManager.cpp
 )
 target_include_directories(ZChatIMCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include

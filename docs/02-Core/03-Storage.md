@@ -118,6 +118,12 @@ SpringBoot: 无直接访问权限
 
 ---
 
+## 六、`.zdb` 物理布局（v1）
+
+**64 字节文件头 + payload 明文区**（固定 `ZDB_FILE_SIZE`、小端整数、魔术 `ZDB\0`）的字段级说明见 **`04-ZdbBinaryLayout.md`**。实现：`ZdbFile` / `ZdbManager`（MM2）。
+
+---
+
 ## 七、C++ 实现落点（`ZChatIM`）
 
 | 组件 | 路径 | 说明 |
@@ -125,5 +131,6 @@ SpringBoot: 无直接访问权限
 | `SqliteMetadataDb` | `include/mm2/storage/SqliteMetadataDb.h`、`src/mm2/storage/SqliteMetadataDb.cpp` | 元数据索引库：建表 **zdb_files / data_blocks / user_data / group_data / group_members**（与 §二 对齐）；**每次 `Open` 后**对连接执行 `PRAGMA foreign_keys=ON`；`InitializeSchema` 内再次保证并设置 **`user_version=1`**（与 `kSchemaUserVersion` 一致）。**`InsertDataBlock` / `UpsertDataBlock` / `GetDataBlock` / `DataBlockExists`** 等前置校验见 **§2.2、§2.6**。当前为 **vanilla SQLite**；§4.2 所述 **SQLCipher** 待密钥接入后再换。SQLite 源码：`thirdparty/sqlite/` amalgamation。 |
 | `StorageIntegrityManager` | `include/mm2/storage/StorageIntegrityManager.h`、`src/mm2/storage/StorageIntegrityManager.cpp` | §5 闭环：`ComputeSha256`（Windows **BCrypt** / 其他平台可移植实现）、`Bind(SqliteMetadataDb*)` 后 **`RecordDataBlockHash` → `UpsertDataBlock`**、**`VerifyDataBlockHash` → `GetDataBlock`** 比对。与 `SqliteMetadataDb` 一致校验 **`dataId` 长度、`chunkIndex <= INT_MAX`、非空 `file_id`**。 |
 | `crypto::Sha256` | `include/mm2/crypto/Sha256.h`、`src/mm2/crypto/Sha256.cpp` | 纯 SHA-256 工具，供完整性链与其它模块复用。 |
+| `ZdbFile` / `ZdbManager` | `include/mm2/storage/ZdbFile.h`、`ZdbManager.h`；`src/mm2/storage/ZdbFile.cpp`、`ZdbManager.cpp` | **§六 / `04-ZdbBinaryLayout.md`**：`.zdb` v1 容器（64 字节头 + payload；`AppendRaw` / `WriteData`）。`ZdbManager::WriteData` 要求 **`dataId.size() == MESSAGE_ID_SIZE (16)`**（供上层与 `data_blocks` 对齐），v1 不在本层写 SQLite。 |
 
-自检：`ZChatIM --test` 中 **SqliteMetadataDb** 用例（临时 DB：`zdb_files` / `data_blocks` 外键、`user_data` Upsert/Get 与 FK、`group_data` / `group_members` / `DeleteGroupMember`）；**StorageIntegrityManager** 用例（空串 SHA-256 向量、写入临时 `.zdb` 后 Record/Verify）。
+自检：`ZChatIM --test` 中 **SqliteMetadataDb** 用例（临时 DB：`zdb_files` / `data_blocks` 外键、`user_data` Upsert/Get 与 FK、`group_data` / `group_members` / `DeleteGroupMember`）；**StorageIntegrityManager** 用例（空串 SHA-256 向量、写入临时 `.zdb` 后 Record/Verify）；**ZDB v1** 用例（`ZdbManager` 首条追加 **`offset==64`**、魔数、`ReadData` 与可选 **SQLite + `RecordDataBlockHash` / `Verify`**）。

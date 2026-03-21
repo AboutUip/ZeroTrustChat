@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Types.h"
+#include "Types.h"
 #include <string>
 #include <cstdint>
 #include <fstream>
@@ -43,8 +43,11 @@ namespace ZChatIM
             // 数据操作
             // =============================================================
             
-            // 写入数据
+            // 写入数据（payload 区：offset >= sizeof(ZdbHeader)；成功后可扩展 usedSize）
             bool WriteData(uint64_t offset, const uint8_t* data, size_t length);
+
+            // 在文件尾追加 payload（v1 推荐路径；outOffset 为写入起点，含头后第一字节起算）
+            bool AppendRaw(const uint8_t* data, size_t length, uint64_t& outOffset);
             
             // 读取数据
             bool ReadData(uint64_t offset, uint8_t* buffer, size_t length);
@@ -86,7 +89,9 @@ namespace ZChatIM
             
             // 检查文件是否损坏
             bool IsCorrupted() const;
-            
+
+            std::string LastError() const { return m_lastError; }
+
         private:
             // =============================================================
             // 内部方法
@@ -115,10 +120,11 @@ namespace ZChatIM
             std::fstream m_file;        // 文件流
             ZdbHeader m_header;         // 文件头
             mutable std::mutex m_mutex; // 互斥锁
-            
-            // 空间管理
+            std::string m_lastError;
+
+            // 空间管理（v1：仅追加，空闲表未使用）
             std::vector<uint64_t> m_freeSlots; // 空闲槽位
-            size_t m_usedSpace;         // 已用空间
+            size_t m_usedSpace;                // 与 m_header.usedSize 同步（遗留字段）
         };
         
     } // namespace mm2

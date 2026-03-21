@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Types.h"
+#include "Types.h"
 #include "ZdbFile.h"
 #include <string>
 #include <vector>
@@ -95,7 +95,9 @@ namespace ZChatIM
             
             // 检查是否需要创建新文件
             bool NeedCreateNewFile() const;
-            
+
+            std::string LastError() const { return m_lastError; }
+
         private:
             // =============================================================
             // 内部方法
@@ -118,12 +120,21 @@ namespace ZChatIM
             
             // 清理过期文件
             bool CleanupExpiredFiles();
-            
+
+            // 在已持有 m_mutex 的前提下创建新文件（避免 CreateFile 与 WriteData 死锁）
+            bool CreateNewFileUnlocked(std::string& outFileId);
+
+            // 已持有 m_mutex：释放句柄并清空映射（Initialize 用，避免与 Cleanup 重入锁死锁）
+            void CleanupUnlocked();
+
+            void RefreshTotalsLocked();
+
             // =============================================================
             // 成员变量
             // =============================================================
             
             std::string m_dataDir;                          // 数据目录
+            std::string m_lastError;
             mutable std::mutex m_mutex;                     // 互斥锁
             std::map<std::string, std::shared_ptr<ZdbFile>> m_files; // 文件映射
             std::vector<std::string> m_fileList;            // 文件列表
