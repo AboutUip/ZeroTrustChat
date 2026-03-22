@@ -63,10 +63,10 @@ namespace ZChatIM
             // 获取当前时间字符串
             static std::string GetCurrentTimeString();
             
-            // 获取当前日期字符串
+            // 获取当前日期字符串（**`gmtime` 失败** 时返回**空串**）
             static std::string GetCurrentDateString();
             
-            // 获取当前日期时间字符串
+            // 获取当前日期时间字符串（**`gmtime` 失败** 时返回**空串**）
             static std::string GetCurrentDateTimeString();
             
         private:

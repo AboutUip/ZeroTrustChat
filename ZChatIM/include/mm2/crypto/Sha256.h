@@ -2,25 +2,30 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 namespace ZChatIM::crypto {
 
-    // SHA-256 over arbitrary bytes (portable implementation). Returns false on failure.
+    // SHA-256（**OpenSSL 3** **`EVP_sha256`**）；与协议/存储摘要字节一致（标准 FIPS 180-4 输出）。
     bool Sha256(const uint8_t* data, size_t length, uint8_t outDigest[32]);
 
-    // Incremental SHA-256 (portable FIPS 180-4); use for large inputs (e.g. file chunk streams).
+    // 增量 SHA-256（大文件流式，如 **`MM2::CompleteFile`**）。
     class Sha256Hasher {
     public:
         Sha256Hasher();
+        ~Sha256Hasher();
+        Sha256Hasher(Sha256Hasher&&) noexcept;
+        Sha256Hasher& operator=(Sha256Hasher&&) noexcept;
+        Sha256Hasher(const Sha256Hasher&)            = delete;
+        Sha256Hasher& operator=(const Sha256Hasher&) = delete;
+
         void Reset();
         bool Update(const uint8_t* data, size_t length);
         bool Final(uint8_t outDigest[32]);
 
     private:
-        uint32_t state_[8]{};
-        uint8_t  buf_[64]{};
-        size_t   bufLen_ = 0;
-        uint64_t totalBitsLow_ = 0; // bits processed mod 2^64 (sufficient for practical file sizes)
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
     };
 
 } // namespace ZChatIM::crypto

@@ -235,12 +235,14 @@ namespace ZChatIM::common {
         if (wlen <= 0)
             return utf8;
         std::wstring wbuf(static_cast<size_t>(wlen), L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), wbuf.data(), wlen);
+        if (MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), wbuf.data(), wlen) != wlen)
+            return utf8;
         const int glen = WideCharToMultiByte(936, 0, wbuf.c_str(), wlen, nullptr, 0, nullptr, nullptr);
         if (glen <= 0)
             return utf8;
         std::string out(static_cast<size_t>(glen), '\0');
-        WideCharToMultiByte(936, 0, wbuf.c_str(), wlen, out.data(), glen, nullptr, nullptr);
+        if (WideCharToMultiByte(936, 0, wbuf.c_str(), wlen, out.data(), glen, nullptr, nullptr) != glen)
+            return utf8;
         return out;
 #else
         (void)utf8;
@@ -257,12 +259,14 @@ namespace ZChatIM::common {
         if (wlen <= 0)
             return gbk;
         std::wstring wbuf(static_cast<size_t>(wlen), L'\0');
-        MultiByteToWideChar(936, 0, gbk.c_str(), static_cast<int>(gbk.size()), wbuf.data(), wlen);
+        if (MultiByteToWideChar(936, 0, gbk.c_str(), static_cast<int>(gbk.size()), wbuf.data(), wlen) != wlen)
+            return gbk;
         const int u8len = WideCharToMultiByte(CP_UTF8, 0, wbuf.c_str(), wlen, nullptr, 0, nullptr, nullptr);
         if (u8len <= 0)
             return gbk;
         std::string out(static_cast<size_t>(u8len), '\0');
-        WideCharToMultiByte(CP_UTF8, 0, wbuf.c_str(), wlen, out.data(), u8len, nullptr, nullptr);
+        if (WideCharToMultiByte(CP_UTF8, 0, wbuf.c_str(), wlen, out.data(), u8len, nullptr, nullptr) != u8len)
+            return gbk;
         return out;
 #else
         (void)gbk;

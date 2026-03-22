@@ -155,3 +155,15 @@ Member Key (成员加密密钥) → .zdb 存储 (公钥加密)
 - 分发确认: 双向 ACK
 - 传输: TLS 1.3 + 端到端加密
 - 校验: SHA-256 完整性验证
+
+## 十、与当前 ZChatIM native 实现的对照（避免与上文产品愿景混淆）
+
+| 主题 | 本文档（产品/目标） | **当前代码**（权威：`docs/02-Core/05-ZChatIM-Implementation-Status.md`） |
+|------|---------------------|--------------------------------------------------------------------------|
+| 成员列表可见性 | §八：倾向管理员可见完整列表 | **`GetGroupMembers`**：任意**在群成员**可拉取 **`user_id` 列表**（SQLite **`group_members`**） |
+| 群密钥 / `group_data` | Group Key、Member Key、**.zdb** 大块、成员级分发 | **已实现本地信封 `ZGK1`**：**`group_data` + `data_blocks` chunk0**（**44B**：魔数 + epoch + 32B 随机）；**`CreateGroup`** 写首包，**`UpdateGroupKey`** 由 **owner/admin** 轮换；**尚无** per-member 加密分发 / ACK（见 §六） |
+| 邀请 | 协议层 GROUP_INVITE | **须** **`friend_requests` status=1** 边（邀请者视角 **accepted** 列表含被邀请人） |
+| JNI 权限 | 协议层 GROUP_* | **`docs/06-Appendix/01-JNI.md`** + **`mm1::GroupManager`**（**principal** 作操作者、**role** 0/1/2） |
+| 踢人 / 退群后密钥 | §五：踢人触发轮换 | **当前**：**`RemoveMember`/`LeaveGroup`** **不**自动 **`UpdateGroupKey`**；须产品层显式轮换或后续接自动策略 |
+
+产品收紧策略（如成员列表 ACL）须在 **MM1** 与 **§八** 同步改版。

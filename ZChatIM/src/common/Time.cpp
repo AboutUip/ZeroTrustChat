@@ -97,9 +97,11 @@ namespace ZChatIM::common {
         const std::time_t t = clock::to_time_t(clock::now());
         std::tm tmBuf{};
 #if defined(_WIN32)
-        gmtime_s(&tmBuf, &t);
+        if (gmtime_s(&tmBuf, &t) != 0)
+            return {};
 #else
-        gmtime_r(&t, &tmBuf);
+        if (gmtime_r(&t, &tmBuf) == nullptr)
+            return {};
 #endif
         std::ostringstream oss;
         oss << std::put_time(&tmBuf, "%Y-%m-%d");
@@ -112,9 +114,11 @@ namespace ZChatIM::common {
         const std::time_t t = clock::to_time_t(clock::now());
         std::tm tmBuf{};
 #if defined(_WIN32)
-        gmtime_s(&tmBuf, &t);
+        if (gmtime_s(&tmBuf, &t) != 0)
+            return {};
 #else
-        gmtime_r(&t, &tmBuf);
+        if (gmtime_r(&t, &tmBuf) == nullptr)
+            return {};
 #endif
         std::ostringstream oss;
         oss << std::put_time(&tmBuf, "%Y-%m-%d %H:%M:%S");

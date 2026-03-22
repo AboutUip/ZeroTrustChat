@@ -17,10 +17,10 @@ namespace ZChatIM
             // =============================================================
             // 初始化
             // =============================================================
-            // **平台后端**：**Windows** — **BCrypt**（AES-GCM / PBKDF2 / RNG 链 + **CryptoAPI** 随机后备）。**Linux / macOS** — **OpenSSL 3 libcrypto**（**`EVP_aes_256_gcm`** / **`PKCS5_PBKDF2_HMAC`** / **`RAND_bytes`** + **`/dev/urandom`** 后备）。须与 **`MM2::Cleanup` / `CleanupUnlocked`** 中 **`Cleanup()`** 成对调用（由 MM2 编排）。
-            // **磁盘格式**：**nonce(12) ‖ ciphertext ‖ tag(16)**，**Windows 与 Unix 字节级一致**（算法同为 AES-256-GCM）。
-            // **构建**：**Windows** 链接 **bcrypt、advapi32**；**非 Windows** **`find_package(OpenSSL 3.0)`** + **`OpenSSL::Crypto`**。
-            // **调用约定**：**`EncryptMessage` / `DecryptMessage` / `DeriveKey`** 要求 **`Init()` 已成功**（**`s_initialized`**）；**`GenerateSecureRandom` / `HashSha256`** **不**检查该标志（**`ZdbFile::Create`**、**`StoreFriendRequest`** 等可在 **`Init`** 前取随机；**`HashSha256`** 为便携 **`crypto::Sha256`**）。
+            // **平台后端**（**全平台**）：**OpenSSL 3 libcrypto** — **`EVP_aes_256_gcm`** / **`PKCS5_PBKDF2_HMAC`** / **`RAND_bytes`**（**Unix** 失败时再试 **`/dev/urandom`**）。须与 **`MM2::Cleanup` / `CleanupUnlocked`** 中 **`Cleanup()`** 成对调用（由 MM2 编排）。
+            // **磁盘格式**：**nonce(12) ‖ ciphertext ‖ tag(16)**，**跨平台字节级一致**（AES-256-GCM）。
+            // **构建**：**`find_package(OpenSSL 3.0)`** + **`OpenSSL::Crypto`**；**Windows** 另链 **`crypt32`**（**DPAPI** / **ZMK1**）；**Apple** 另链 **Security + CoreFoundation**（**Keychain** / **ZMK3**）；**`mm2_message_key.bin`** 见 **`MM2.cpp`**。
+            // **调用约定**：**`EncryptMessage` / `DecryptMessage` / `DeriveKey`** 要求 **`Init()` 已成功**（**`s_initialized`**）；**`GenerateSecureRandom` / `HashSha256`** **不**检查该标志（**`ZdbFile::Create`**、**`StoreFriendRequest`** 等可在 **`Init`** 前取随机；**`HashSha256`** → **`crypto::Sha256`**（**OpenSSL `EVP_sha256`**）。
             
             // 初始化加密库
             static bool Init();
@@ -84,7 +84,7 @@ namespace ZChatIM
             // 安全随机数
             // =============================================================
             
-            // 生成加密安全的随机字节
+            // 生成加密安全的随机字节（**`RAND_bytes`（+`RAND_poll` 重试）**；**Unix** 再试 **`ReadDevUrandom`**）。**全部失败**时返回**空向量**（长度 0 的调用仍返回空向量）。
             static std::vector<uint8_t> GenerateSecureRandom(size_t length);
             
         private:

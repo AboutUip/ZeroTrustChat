@@ -1,6 +1,6 @@
 # 好友验证技术规范
 
-> **冲突处理**：**`MM2::StoreFriendRequest` / `UpdateFriendRequestStatus` / `DeleteFriendRequest` / `CleanupExpiredFriendRequests` 已落 SQLite 表 `friend_requests`**（**`user_version=4`**，见 **`03-Storage.md` 第2.6节**、**`05` 第2.1节**）。**签名校验**仍须在 **MM1 / JNI** 路径完成（**`01-JNI.md`**）；**`MM2` 不验证 Ed25519**。下文含 **产品与协议目标**。
+> **冲突处理**：**`MM2::StoreFriendRequest` / `UpdateFriendRequestStatus` / `DeleteFriendRequest` / `CleanupExpiredFriendRequests` 已落 SQLite 表 `friend_requests`**（元库 **`user_version=5`**，见 **`03-Storage.md` 第2.6节**、**`05` 第2.1节**）。**签名校验**仍须在 **MM1 / JNI** 路径完成（**`01-JNI.md`**）；**`MM2` 不验证 Ed25519**。下文含 **产品与协议目标**。
 
 ## 一、请求流程
 
@@ -111,6 +111,20 @@ pending → expired (7天后)
 - 双向删除: 标记同步
 - 列表存储: .zdb 加密
 - 注销状态: 不泄露
+
+---
+
+## 附录 A：MM1 Ed25519 canonical v1（与 `FriendVerificationManager.cpp` 一致）
+
+**公钥来源**：**`UserData`** 类型 **`0x45444A31`**（32B），与 **Recall / MessageReply** 路径一致。
+
+| 操作 | ASCII 前缀（无 `\0`） | 载荷拼接（字节序） |
+|------|----------------------|-------------------|
+| 发请求 | **`ZChatIM\|SendFriendRequest\|v1`** | **`fromUserId`(16) ‖ `toUserId`(16) ‖ `timestampSeconds`(uint64 BE)** |
+| 响应 | **`ZChatIM\|RespondFriendRequest\|v1`** | **`requestId`(16) ‖ `accept`(1：0/1) ‖ `responderId`(16) ‖ `timestampSeconds`(uint64 BE)** |
+| 删好友 | **`ZChatIM\|DeleteFriend\|v1`** | **`userId`(16) ‖ `friendId`(16) ‖ `timestampSeconds`(uint64 BE)**（**`userId`** 为发起删除方，须与 **JNI principal** 一致） |
+
+**`GetFriends`**：由 **`friend_requests`** 中 **`status=1`（accepted）** 的 **`from_user`/`to_user`** 边推导对端 **user_id**（**无单独 friends 表**）。**`DeleteFriend`**：验签成功后 **DELETE** 上述 **accepted** 边（两端无向匹配）。
 
 ---
 

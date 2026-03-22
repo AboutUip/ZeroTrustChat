@@ -40,8 +40,21 @@ namespace ZChatIM
         // =============================================================
         // MM1 模块 - 安全内存框架
         // =============================================================
-        
+        //
+        // **与 MM2 的分工**（实现与 [05-ZChatIM-Implementation-Status.md](../../../docs/02-Core/05-ZChatIM-Implementation-Status.md) §3 对齐）：
+        // - **MM1**：JNI 信任边界上的校验、会话与策略；安全内存/RNG/密钥门面；各 **Manager** 验签后再路由到 MM2。
+        // - **MM2**：编排、SQLite/ZDB 持久化；**`mm2::Crypto::Init` / `Cleanup` 的生命周期由 MM2 持有**（`MM1::Cleanup` 不调用 `Crypto::Cleanup`）。
+        //
+        // **mm1 → mm2 依赖边界**：允许 **`mm2::Crypto`**（及文档明确的 **Manager → `MM2::…`** 路由，如回复关系）；**禁止**在 MM1 中随意直调其它 MM2 存储 API 绕过 Manager 契约。
+        //
         class MM1 {
+            friend class MessageReplyManager;
+            friend class MessageRecallManager;
+            friend class FriendManager;
+            friend class GroupManager;
+            friend class GroupNameManager;
+            friend class GroupMuteManager;
+
         public:
             // =============================================================
             // 构造函数/析构函数

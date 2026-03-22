@@ -1,6 +1,6 @@
 # 消息回复技术规范
 
-> **实现状态**：**`MM2::StoreMessageReplyRelation` / `GetMessageReplyRelation` 已落 SQLite 表 `im_message_reply`**（**`user_version=4`**）。JNI 契约仍要求先 **`mm1::MessageReplyManager`**（签名校验）再调 MM2（**`01-JNI.md`** 路由摘要、**`ZChatIM/docs/JNI-API-Documentation.md`**）；**`JniBridge` 未接前**不得视为端到端已通。下文为 **产品与 ZSP 目标**。  
+> **实现状态**：**`MM2::StoreMessageReplyRelation` / `GetMessageReplyRelation` 已落 SQLite 表 `im_message_reply`**（**`SqliteMetadataDb` 元库当前 `user_version=5`**，见 **`03-Storage.md`**）。**`mm1::MessageReplyManager::StoreMessageReplyRelation`** 已实现：**`TryGetSessionUserId`** 会话绑定 + **`common::Ed25519VerifyDetached`**（**OpenSSL**；**canonical payload** 见 **`ZChatIM/docs/JNI-API-Documentation.md`**）+ **MM2** 落库；入参含 **`senderEd25519PublicKey`（32B）**。**JNI**：**`storeMessageReplyRelation` / `getMessageReplyRelation`** 已由 **`jni/JniNatives.cpp`** 接 **`JniBridge`**。下文为 **产品与 ZSP 目标**。  
 > **TLV**：**`Type = 0x10` `MessageReply`** 为 **载荷内 TLV**（**`02-ZSP-Protocol.md` 第7.2节**），**≠** **MessageType `0x10` `GROUP_UPDATE`**（第五节）。
 
 ## 一、回复流程

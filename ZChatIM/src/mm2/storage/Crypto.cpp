@@ -1,30 +1,25 @@
 // MM2 Crypto: wire format nonce(12) ‖ ciphertext ‖ tag(16); PBKDF2-HMAC-SHA256, 100000 iters.
-// Windows: BCrypt (AES-GCM / PBKDF2 / RNG). Linux/macOS: OpenSSL 3 libcrypto.
+// All platforms: OpenSSL 3 libcrypto (AES-GCM / PBKDF2 / RNG).
 
 #include "mm2/storage/Crypto.h"
 #include "mm2/crypto/Sha256.h"
+#include "common/OpenSsl3Required.h"
+
+#include <openssl/evp.h>
+#include <openssl/rand.h>
 
 #include <cstring>
-#include <cwchar>
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <mutex>
 
-#if defined(_WIN32)
-#    ifndef NOMINMAX
-#        define NOMINMAX
-#    endif
-#    include <windows.h>
-#    include <bcrypt.h>
-#    include <wincrypt.h>
-#else
-#    include <openssl/evp.h>
-#    include <openssl/opensslv.h>
-#    include <openssl/rand.h>
-#    if OPENSSL_VERSION_MAJOR < 3
-#        error "ZChatIM (non-Windows) requires OpenSSL 3.x (libcrypto)."
-#    endif
-#endif
+namespace {
+
+    // Serialize Init/Cleanup vs concurrent first-time Init (defense in depth; MM2 also holds its own lock).
+    std::mutex g_cryptoInitMutex;
+
+} // namespace
 
 namespace ZChatIM::mm2 {
 
@@ -37,39 +32,15 @@ namespace ZChatIM::mm2 {
             (void)len;
             return false;
 #else
+            if (len > static_cast<size_t>((std::numeric_limits<std::streamsize>::max)()))
+                return false;
             std::ifstream f("/dev/urandom", std::ios::binary);
-            return static_cast<bool>(f.read(static_cast<char*>(buf), static_cast<std::streamsize>(len)));
+            if (!f.read(static_cast<char*>(buf), static_cast<std::streamsize>(len)))
+                return false;
+            return f.gcount() == static_cast<std::streamsize>(len);
 #endif
         }
 
-#if defined(_WIN32)
-        BCRYPT_ALG_HANDLE g_pbkdf2Alg = nullptr;
-        BCRYPT_ALG_HANDLE g_aesGcmAlg = nullptr;
-        BCRYPT_ALG_HANDLE g_rngAlg = nullptr;
-
-        bool FillRandomCryptGenRandom(uint8_t* buf, size_t length)
-        {
-            if (buf == nullptr || length == 0) {
-                return false;
-            }
-            if (length > static_cast<size_t>(DWORD(-1))) {
-                return false;
-            }
-            HCRYPTPROV hProv = 0;
-            if (!CryptAcquireContextW(&hProv, nullptr, nullptr, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
-#    if defined(PROV_RSA_AES)
-                if (!CryptAcquireContextW(&hProv, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) {
-                    return false;
-                }
-#    else
-                return false;
-#    endif
-            }
-            const BOOL ok = CryptGenRandom(hProv, static_cast<DWORD>(length), buf);
-            CryptReleaseContext(hProv, 0);
-            return ok != FALSE;
-        }
-#else
         using EvpCipherCtxPtr = std::unique_ptr<EVP_CIPHER_CTX, decltype(&EVP_CIPHER_CTX_free)>;
 
         EvpCipherCtxPtr MakeCipherCtx()
@@ -77,7 +48,6 @@ namespace ZChatIM::mm2 {
             EVP_CIPHER_CTX* raw = EVP_CIPHER_CTX_new();
             return EvpCipherCtxPtr(raw, &EVP_CIPHER_CTX_free);
         }
-#endif
 
     } // namespace
 
@@ -88,71 +58,13 @@ namespace ZChatIM::mm2 {
         if (s_initialized) {
             return true;
         }
-#if defined(_WIN32)
-        NTSTATUS st = BCryptOpenAlgorithmProvider(&g_aesGcmAlg, BCRYPT_AES_ALGORITHM, nullptr, 0);
-        if (st != 0) {
-            return false;
-        }
-        wchar_t gcmModeBuf[64];
-        {
-            const size_t n = std::wcslen(BCRYPT_CHAIN_MODE_GCM);
-            if (n + 1U > 64) {
-                BCryptCloseAlgorithmProvider(g_aesGcmAlg, 0);
-                g_aesGcmAlg = nullptr;
-                return false;
-            }
-            std::wmemcpy(gcmModeBuf, BCRYPT_CHAIN_MODE_GCM, n + 1U);
-        }
-        const ULONG modeBytes = static_cast<ULONG>((std::wcslen(gcmModeBuf) + 1U) * sizeof(wchar_t));
-        st                    = BCryptSetProperty(
-            g_aesGcmAlg,
-            BCRYPT_CHAINING_MODE,
-            reinterpret_cast<PUCHAR>(gcmModeBuf),
-            modeBytes,
-            0);
-        if (st != 0) {
-            BCryptCloseAlgorithmProvider(g_aesGcmAlg, 0);
-            g_aesGcmAlg = nullptr;
-            return false;
-        }
-        st = BCryptOpenAlgorithmProvider(&g_pbkdf2Alg, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG);
-        if (st != 0) {
-            BCryptCloseAlgorithmProvider(g_aesGcmAlg, 0);
-            g_aesGcmAlg = nullptr;
-            return false;
-        }
-        st = BCryptOpenAlgorithmProvider(&g_rngAlg, BCRYPT_RNG_ALGORITHM, nullptr, 0);
-        if (st != 0) {
-            st = BCryptOpenAlgorithmProvider(&g_rngAlg, BCRYPT_RNG_ALGORITHM, MS_PRIMITIVE_PROVIDER, 0);
-        }
-        if (st != 0) {
-            g_rngAlg = nullptr;
-        }
-#else
-        if (OPENSSL_VERSION_MAJOR < 3) {
-            return false;
-        }
-#endif
         s_initialized = true;
         return true;
     }
 
     void Crypto::Cleanup()
     {
-#if defined(_WIN32)
-        if (g_rngAlg != nullptr) {
-            BCryptCloseAlgorithmProvider(g_rngAlg, 0);
-            g_rngAlg = nullptr;
-        }
-        if (g_pbkdf2Alg != nullptr) {
-            BCryptCloseAlgorithmProvider(g_pbkdf2Alg, 0);
-            g_pbkdf2Alg = nullptr;
-        }
-        if (g_aesGcmAlg != nullptr) {
-            BCryptCloseAlgorithmProvider(g_aesGcmAlg, 0);
-            g_aesGcmAlg = nullptr;
-        }
-#endif
+        std::lock_guard<std::mutex> lk(g_cryptoInitMutex);
         s_initialized = false;
     }
 
@@ -178,54 +90,6 @@ namespace ZChatIM::mm2 {
             return false;
         }
 
-#if defined(_WIN32)
-        if (g_aesGcmAlg == nullptr) {
-            return false;
-        }
-
-        BCRYPT_KEY_HANDLE hKey = nullptr;
-        NTSTATUS          st   = BCryptGenerateSymmetricKey(
-            g_aesGcmAlg, &hKey, nullptr, 0, const_cast<PUCHAR>(key), static_cast<ULONG>(keyLen), 0);
-        if (st != 0) {
-            return false;
-        }
-
-        const ULONG plainUL = static_cast<ULONG>(plaintextLen);
-        constexpr ULONG kAesBlock = 16;
-        const ULONG     outCap    = plainUL == 0 ? kAesBlock : ((plainUL + kAesBlock - 1U) / kAesBlock) * kAesBlock;
-        ciphertext.resize(static_cast<size_t>(outCap));
-
-        BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO auth{};
-        BCRYPT_INIT_AUTH_MODE_INFO(auth);
-        auth.pbNonce       = nonce;
-        auth.cbNonce       = static_cast<ULONG>(nonceLen);
-        auth.pbTag         = authTag;
-        auth.cbTag         = static_cast<ULONG>(authTagLen);
-
-        ULONG cbCipher = 0;
-        st             = BCryptEncrypt(
-            hKey,
-            plainUL > 0 ? const_cast<PUCHAR>(plaintext) : nullptr,
-            plainUL,
-            &auth,
-            nullptr,
-            0,
-            reinterpret_cast<PUCHAR>(ciphertext.data()),
-            outCap,
-            &cbCipher,
-            0);
-        BCryptDestroyKey(hKey);
-        if (st != 0) {
-            ciphertext.clear();
-            return false;
-        }
-        if (cbCipher != plainUL) {
-            ciphertext.clear();
-            return false;
-        }
-        ciphertext.resize(static_cast<size_t>(cbCipher));
-        return true;
-#else
         if (plaintextLen > static_cast<size_t>(std::numeric_limits<int>::max())) {
             return false;
         }
@@ -277,7 +141,6 @@ namespace ZChatIM::mm2 {
             return false;
         }
         return true;
-#endif
     }
 
     bool Crypto::DecryptMessage(
@@ -302,54 +165,6 @@ namespace ZChatIM::mm2 {
             return false;
         }
 
-#if defined(_WIN32)
-        if (g_aesGcmAlg == nullptr) {
-            return false;
-        }
-
-        BCRYPT_KEY_HANDLE hKey = nullptr;
-        NTSTATUS          st   = BCryptGenerateSymmetricKey(
-            g_aesGcmAlg, &hKey, nullptr, 0, const_cast<PUCHAR>(key), static_cast<ULONG>(keyLen), 0);
-        if (st != 0) {
-            return false;
-        }
-
-        const ULONG ctUL = static_cast<ULONG>(ciphertextLen);
-        constexpr ULONG kAesBlock = 16;
-        const ULONG     outCap    = ctUL == 0 ? kAesBlock : ((ctUL + kAesBlock - 1U) / kAesBlock) * kAesBlock;
-        plaintext.resize(static_cast<size_t>(outCap));
-
-        BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO auth{};
-        BCRYPT_INIT_AUTH_MODE_INFO(auth);
-        auth.pbNonce       = const_cast<PUCHAR>(nonce);
-        auth.cbNonce       = static_cast<ULONG>(nonceLen);
-        auth.pbTag         = const_cast<PUCHAR>(authTag);
-        auth.cbTag         = static_cast<ULONG>(authTagLen);
-
-        ULONG cbPlain = 0;
-        st            = BCryptDecrypt(
-            hKey,
-            ctUL > 0 ? const_cast<PUCHAR>(ciphertext) : nullptr,
-            ctUL,
-            &auth,
-            nullptr,
-            0,
-            reinterpret_cast<PUCHAR>(plaintext.data()),
-            outCap,
-            &cbPlain,
-            0);
-        BCryptDestroyKey(hKey);
-        if (st != 0) {
-            plaintext.clear();
-            return false;
-        }
-        if (cbPlain != ctUL) {
-            plaintext.clear();
-            return false;
-        }
-        plaintext.resize(static_cast<size_t>(cbPlain));
-        return true;
-#else
         if (ciphertextLen > static_cast<size_t>(std::numeric_limits<int>::max())) {
             return false;
         }
@@ -401,7 +216,6 @@ namespace ZChatIM::mm2 {
             return false;
         }
         return true;
-#endif
     }
 
     std::vector<uint8_t> Crypto::GenerateKey(size_t keyLen)
@@ -428,22 +242,6 @@ namespace ZChatIM::mm2 {
         if (inputKeyLen == 0 || saltLen == 0 || outputKeyLen == 0) {
             return false;
         }
-#if defined(_WIN32)
-        if (g_pbkdf2Alg == nullptr) {
-            return false;
-        }
-        const NTSTATUS st = BCryptDeriveKeyPBKDF2(
-            g_pbkdf2Alg,
-            const_cast<PUCHAR>(inputKey),
-            static_cast<ULONG>(inputKeyLen),
-            const_cast<PUCHAR>(salt),
-            static_cast<ULONG>(saltLen),
-            100000ULL,
-            outputKey,
-            static_cast<ULONG>(outputKeyLen),
-            0);
-        return st == 0;
-#else
         if (inputKeyLen > static_cast<size_t>(std::numeric_limits<int>::max())
             || saltLen > static_cast<size_t>(std::numeric_limits<int>::max())
             || outputKeyLen > static_cast<size_t>(std::numeric_limits<int>::max())) {
@@ -460,7 +258,6 @@ namespace ZChatIM::mm2 {
                    static_cast<int>(outputKeyLen),
                    outputKey)
                == 1;
-#endif
     }
 
     bool Crypto::HashSha256(const uint8_t* data, size_t dataLen, uint8_t* hash)
@@ -488,27 +285,6 @@ namespace ZChatIM::mm2 {
         if (length == 0) {
             return out;
         }
-#if defined(_WIN32)
-        if (length > static_cast<size_t>(std::numeric_limits<ULONG>::max())) {
-            return {};
-        }
-        // BCryptGenRandom 返回 NTSTATUS，成功为 0；勿用 BOOL 接收（0 会被当成 false）。
-        if (g_rngAlg != nullptr) {
-            const NTSTATUS stRng = BCryptGenRandom(g_rngAlg, out.data(), static_cast<ULONG>(length), 0);
-            if (stRng == 0) {
-                return out;
-            }
-        }
-        const NTSTATUS stFb =
-            BCryptGenRandom(nullptr, out.data(), static_cast<ULONG>(length), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
-        if (stFb == 0) {
-            return out;
-        }
-        if (FillRandomCryptGenRandom(out.data(), length)) {
-            return out;
-        }
-        return {};
-#else
         if (length > static_cast<size_t>(std::numeric_limits<int>::max())) {
             return {};
         }
@@ -523,7 +299,6 @@ namespace ZChatIM::mm2 {
             return out;
         }
         return {};
-#endif
     }
 
 } // namespace ZChatIM::mm2

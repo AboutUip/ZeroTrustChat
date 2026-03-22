@@ -9,14 +9,14 @@ namespace ZChatIM
     namespace jni
     {
         // =============================================================
-        // JNI 接口（暂时移除 JNI 依赖）
+        // JNI 接口（C++ 侧契约；Java 经 jni/JniNatives.cpp RegisterNatives 绑定）
         // -------------------------------------------------------------
         // 最高安全性契约：除 Initialize / Cleanup / Auth / VerifySession /
         // ValidateJniCall* 外，业务 API 首参均为 callerSessionId
         // （长度 Types::JNI_AUTH_SESSION_TOKEN_BYTES，与 Auth 返回句柄一致）。
-        // 实现 MUST：VerifySession(callerSessionId) 成功并解析 principal 后，
-        // 对后续 userId / senderId / imSessionId 等做绑定与授权校验。
-        // 细则：common/JniSecurityPolicy.h
+        // 会话有效：JniBridge 用 TryGetSessionUserId(caller, principal)，与 VerifySession 等价。
+        // principal 与后续 id 的绑定按 API 分流（非一律 imSessionId==principal），权威表：
+        // docs/06-Appendix/01-JNI.md「principal 绑定矩阵」；摘要：common/JniSecurityPolicy.h
         //
         // 契约表顺序：docs/06-Appendix/01-JNI.md、ZChatIM/docs/JNI-API-Documentation.md
         // 实例桥接：JniBridge.h（同序同签名，无 static）
@@ -28,7 +28,7 @@ namespace ZChatIM
             // 初始化
             // =============================================================
 
-            static bool Initialize();
+            static bool Initialize(const std::string& dataDir, const std::string& indexDir);
             static void Cleanup();
 
             // =============================================================
@@ -103,6 +103,7 @@ namespace ZChatIM
 
             static bool StoreMessageReplyRelation(
                 const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& senderEd25519PublicKey,
                 const std::vector<uint8_t>& messageId,
                 const std::vector<uint8_t>& repliedMsgId,
                 const std::vector<uint8_t>& repliedSenderId,
@@ -322,13 +323,15 @@ namespace ZChatIM
             // 多设备登录
             // =============================================================
 
-            static std::vector<uint8_t> RegisterDeviceSession(
+            // 语义同 JniBridge::RegisterDeviceSession（out 参数区分失败 vs 成功无踢）。
+            static bool RegisterDeviceSession(
                 const std::vector<uint8_t>& callerSessionId,
                 const std::vector<uint8_t>& userId,
                 const std::vector<uint8_t>& deviceId,
                 const std::vector<uint8_t>& sessionId,
-                uint64_t loginTimeMs,
-                uint64_t lastActiveMs);
+                uint64_t                    loginTimeMs,
+                uint64_t                    lastActiveMs,
+                std::vector<uint8_t>&       outKickedSessionId);
 
             static bool UpdateLastActive(
                 const std::vector<uint8_t>& callerSessionId,

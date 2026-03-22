@@ -1,18 +1,27 @@
-# 本机 OpenSSL 预留目录（仅 Linux / macOS 构建）
+# OpenSSL（全平台：MM2 / MM1 / 随机数 / SQLCipher）
 
-**Windows 上构建 ZChatIM 不需要 OpenSSL**（MM2 使用 **BCrypt**）。本目录供 **Linux、macOS** 在无法使用系统包管理器时，把 **OpenSSL 3** 预编译包放在本地使用。
+**ZChatIM** 在 **Windows、Linux、macOS** 上均 **`find_package(OpenSSL 3.0 REQUIRED)`** 并链接 **`OpenSSL::Crypto`**（**SQLCipher** 另链 **`OpenSSL::SSL`**）。
 
-## 目录结构
+- **MM2 `Crypto.cpp`**：AES-256-GCM、PBKDF2、**`RAND_bytes`**
+- **`common/Ed25519.cpp`**：Ed25519 验签
+- **`common/Random.cpp`**、**`AuthSessionManager`**：安全随机（**`RAND_bytes`**；Unix 可再读 **`/dev/urandom`**）
+- **SQLCipher**：编解码（默认 **`ZCHATIM_USE_SQLCIPHER=ON`**）
 
-```
-thirdparty/openssl/
-  README.md                 ← 本说明
-  versions/
-    README.md
-    openssl-3.x.x-linux/    ← 某一版本根目录（含 include/、lib/）
-    current/                ← 指向当前使用的版本（或复制一份）
-```
+**Windows 无系统开发包**：把 **`nmake install`**（或等价）得到的**安装根**放到约定目录，或设 **`OPENSSL_ROOT_DIR`**。
 
-若存在 **`versions/current/include/openssl/ssl.h`**，且 CMake 未设置 **`OPENSSL_ROOT_DIR`**，**`CMakeLists.txt`**（非 Windows）会自动使用 **`current`**。
+## 目录约定（细粒度）
 
-**`versions/*` 下内容默认不提交 Git**（见仓库根 `.gitignore`）。
+详见 **`LAYOUT.md`**。摘要：
+
+| 用途 | 路径 |
+|------|------|
+| **推荐（Win64 成品）** | **`prebuilt/windows-x64/openssl/`**（`include/openssl/ssl.h`、`lib/libcrypto.lib` …） |
+| **可选（构建归档）** | **`builds/windows-x64/install/`** → 可复制到上一行 |
+| **兼容** | **`versions/win64/current/`** 或 **`versions/current/`** |
+| **任意** | **`OPENSSL_ROOT_DIR`** 环境变量 / CMake 缓存 |
+
+**Linux / macOS**：系统 **`libssl-dev`** / **Homebrew**，或 **`versions/current/`**。
+
+**`versions/*`、`prebuilt/*`、`builds/*` 下大文件默认不入 Git**（见仓库根 **`.gitignore`**）。
+
+**MM2 密钥文件**：**Windows** **`ZMK1` + DPAPI**（**`crypt32`**，**`MM2.cpp`**）；**Apple** **`ZMK3` + Keychain**（**`MM2_message_key_darwin.cpp`**）；**其它 Unix** **`ZMK2` + 派生封装 + AES-GCM**（**`MM2.cpp`**）。均与 OpenSSL **并存**。

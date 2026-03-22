@@ -32,6 +32,9 @@ namespace ZChatIM
 
             bool VerifySession(const std::vector<uint8_t>& sessionId);
 
+            // 若会话有效且未过期，写出 **USER_ID_SIZE** 字节 principal；否则 **outUserId** 清空并返回 false。
+            bool TryGetSessionUserId(const std::vector<uint8_t>& sessionId, std::vector<uint8_t>& outUserId);
+
             bool DestroySession(const std::vector<uint8_t>& sessionId);
 
         private:

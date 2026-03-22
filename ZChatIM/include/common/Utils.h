@@ -18,7 +18,7 @@ namespace ZChatIM
             // 字节转换
             // =============================================================
             
-            // 字节数组转十六进制字符串（**`length>0` 且 `data==nullptr`** 时返回空串）
+            // 字节数组转十六进制字符串（**`length>0` 且 `data==nullptr`** 时返回空串；**`length*2` 溢出 `size_t`** 时返回空串）
             static std::string BytesToHex(const uint8_t* data, size_t length);
             
             // 十六进制字符串转字节数组（**需写入字节数 `>0` 且 `output==nullptr`** 时返回 **false**）
@@ -27,7 +27,7 @@ namespace ZChatIM
             // 字符串转字节数组
             static std::vector<uint8_t> StringToBytes(const std::string& str);
             
-            // 字节数组转字符串
+            // 字节数组转字符串（**`length>0` 且 `data==nullptr`** 时返回空串；**`length` 超过 `std::string::max_size()`** 时返回空串）
             static std::string BytesToString(const uint8_t* data, size_t length);
             
             // =============================================================

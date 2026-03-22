@@ -8,23 +8,11 @@
   "configurePresets": [
     {
       "name": "windows-default",
-      "displayName": "Windows: BCrypt (no OpenSSL)",
-      "description": "MM2/MM1 crypto uses system BCrypt; no OPENSSL_ROOT_DIR or vcpkg OpenSSL needed.",
+      "displayName": "Windows x64: OpenSSL 3 + SQLCipher amalgamation (no vcpkg)",
+      "description": "MM2/MM1/crypto: OpenSSL 3 libcrypto (AES-GCM, PBKDF2, RAND, Ed25519 EVP, SHA-256 EVP). SQLCipher: in-tree sqlite3.c + OpenSSL::SSL/Crypto. Optional: thirdparty/openssl/prebuilt/windows-x64/openssl or OPENSSL_ROOT_DIR. JNI off by default in this preset.",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build",
-      "cacheVariables": {
-        "ZCHATIM_BUILD_JNI": "OFF"
-      }
-    },
-    {
-      "name": "windows-vcpkg",
-      "displayName": "Windows: vcpkg toolchain (optional; crypto still BCrypt)",
-      "description": "Use when you rely on vcpkg for other ports; ZChatIM on Windows does not link OpenSSL for MM2.",
-      "generator": "Visual Studio 17 2022",
-      "architecture": "x64",
-      "binaryDir": "${sourceDir}/build",
-      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
       "cacheVariables": {
         "ZCHATIM_BUILD_JNI": "OFF"
       }

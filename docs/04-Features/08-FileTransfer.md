@@ -1,6 +1,6 @@
 # 文件传输技术规范
 
-> **冲突处理**：**`StoreFileChunk`** 将分片写入 **`.zdb`** 并记 **`data_blocks`**（**`03-Storage.md` 第七节**），**非**「仅内存」。**续传断点**由 **`MM2::StoreTransferResumeChunkIndex` / `GetTransferResumeChunkIndex` / `CleanupTransferResumeChunkIndex`** 写入 SQLite 表 **`mm2_file_transfer`**（**`user_version=4`**，见 **`05-ZChatIM-Implementation-Status.md` 第2.1节**）；**`CompleteFile` / `CancelFile`** 已接库。**JNI** 侧仍待 **`ZChatIMJNI`** 导出（**`01-JNI.md`**）。
+> **冲突处理**：**`StoreFileChunk`** 将分片写入 **`.zdb`** 并记 **`data_blocks`**（**`03-Storage.md` 第七节**），**非**「仅内存」。**续传断点**由 **`MM2::StoreTransferResumeChunkIndex` / `GetTransferResumeChunkIndex` / `CleanupTransferResumeChunkIndex`** 写入 SQLite 表 **`mm2_file_transfer`**（元库 **`user_version=5`**，见 **`03-Storage.md`**、**`05-ZChatIM-Implementation-Status.md` 第2.1节**）；**`CompleteFile` / `CancelFile`** 已接库。**JNI**：文件相关 **`native`** 已由 **`JniBridge` + `jni/JniNatives.cpp`** 导出（**`01-JNI.md`**）。
 
 ## 一、传输流程
 
@@ -50,7 +50,7 @@
 **断点索引（最后成功 chunk）**：
 
 - **MM2**：**`StoreTransferResumeChunkIndex`** 等已写入 **`mm2_file_transfer`**；**`GetTransferResumeChunkIndex`** 无行时 **`false`**（JNI 接线时常映射 **`UINT32_MAX`**，见 **`01-JNI.md`** 路由摘要）。
-- **JNI**：仍待桥接；业务若只走 Java 且未接 native，则仍须**自存断点**或从零重传。
+- **JNI**：已桥接 **`storeFileChunk` / `getFileChunk` / 续传索引等**；业务仍须保证 **`fileId` 字节与 MM2 派生 `data_id` 一致**（**`01-JNI.md`**）。
 
 ```
 传输中断（目标流程）:

@@ -158,7 +158,10 @@ namespace ZChatIM::common {
         if (static_cast<std::uintmax_t>(len) > static_cast<std::uintmax_t>(std::numeric_limits<size_t>::max()))
             return false;
         buffer.resize(static_cast<size_t>(len));
-        return static_cast<bool>(in.read(reinterpret_cast<char*>(buffer.data()), len));
+        const auto toRead = static_cast<std::streamsize>(len);
+        if (!in.read(reinterpret_cast<char*>(buffer.data()), toRead))
+            return false;
+        return in.gcount() == toRead;
     }
 
     bool File::WriteFile(const std::string& filePath, const uint8_t* data, size_t length)
@@ -169,6 +172,8 @@ namespace ZChatIM::common {
         if (length == 0)
             return true;
         if (!data)
+            return false;
+        if (length > static_cast<size_t>((std::numeric_limits<std::streamsize>::max)()))
             return false;
         out.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(length));
         return static_cast<bool>(out);
@@ -182,6 +187,8 @@ namespace ZChatIM::common {
         if (length == 0)
             return true;
         if (!data)
+            return false;
+        if (length > static_cast<size_t>((std::numeric_limits<std::streamsize>::max)()))
             return false;
         out.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(length));
         return static_cast<bool>(out);

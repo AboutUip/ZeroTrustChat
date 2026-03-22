@@ -2,69 +2,35 @@
 #include <iostream>
 
 #if defined(ZCHATIM_NO_INTREE_TESTS)
-struct CommonTestResult {
-    int failures;
-    int checks;
-};
 namespace {
 int RunMM1ManagerTests()
 {
     std::cerr << "ZChatIM: in-tree tests not compiled (configure with -DZCHATIM_BUILD_TESTS=ON and rebuild).\n";
     return 2;
 }
-int RunMinimalScenarioTests()
-{
-    std::cerr << "ZChatIM: in-tree tests not compiled (configure with -DZCHATIM_BUILD_TESTS=ON and rebuild).\n";
-    return 2;
-}
-int RunMM2FiftyScenarioTests()
-{
-    std::cerr << "ZChatIM: in-tree tests not compiled (configure with -DZCHATIM_BUILD_TESTS=ON and rebuild).\n";
-    return 2;
-}
-CommonTestResult RunCommonToolsTests()
-{
-    std::cerr << "ZChatIM: in-tree tests not compiled (configure with -DZCHATIM_BUILD_TESTS=ON and rebuild).\n";
-    return {2, 0};
-}
 } // namespace
 #else
-#include "tests/common_tools_test.h"
-// Tests: tests/common_tools_test.cpp, tests/mm1_managers_test.cpp, tests/mm2_fifty_scenarios_test.cpp
+// Tests: common_tools_test, mm1_managers_test (内含 MM2-50 + jni_im_smoke), ...
 int RunMM1ManagerTests();
-int RunMinimalScenarioTests();
-int RunMM2FiftyScenarioTests();
 #endif
 
 int main(int argc, char* argv[])
 {
-    if (argc > 1 && std::strcmp(argv[1], "--test-common") == 0) {
-        const CommonTestResult r = RunCommonToolsTests();
-        return r.failures != 0 ? 1 : 0;
-    }
-    if (argc > 1 && std::strcmp(argv[1], "--test-minimal") == 0) {
-        const int failed = RunMinimalScenarioTests();
-        return failed != 0 ? 1 : 0;
-    }
-    if (argc > 1 && std::strcmp(argv[1], "--test-mm250") == 0) {
-        const int failed = RunMM2FiftyScenarioTests();
-        return failed != 0 ? 1 : 0;
-    }
     if (argc > 1 && std::strcmp(argv[1], "--test") == 0) {
         const int failed = RunMM1ManagerTests();
         return failed != 0 ? 1 : 0;
     }
 
-    // Typos / stale exe: older builds did not recognize --test-mm250 and fell through here silently.
     if (argc > 1 && std::strncmp(argv[1], "--test", 6) == 0) {
         std::cerr << "Unknown option: " << argv[1] << "\n";
-        std::cerr << "Use: --test | --test-common | --test-minimal | --test-mm250\n";
-        std::cerr << "If you expected --test-mm250, rebuild the ZChatIM target (CMake / VS Build).\n";
+        std::cerr << "Use: --test  (full suite: common + MM1/MM2 + minimal MM2 + MM2-50 + JNI IM smoke)\n";
+        std::cerr << "If you expected a --test* flag, rebuild the ZChatIM target (CMake / VS Build).\n";
         return 2;
     }
 
     std::cout << "ZChatIM C++ core.\n";
     std::cout << "Technical documentation index: docs/README.md (repository root).\n";
     std::cout << "JNI shared library target: ZChatIMJNI.\n";
+    std::cout << "Full in-tree tests: ZChatIM --test (requires tests built in).\n";
     return 0;
 }

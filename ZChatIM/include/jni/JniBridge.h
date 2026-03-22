@@ -14,7 +14,7 @@ namespace ZChatIM
     namespace jni
     {
         // =============================================================
-        // JNI 桥接类（暂时移除 JNI 依赖）
+        // JNI 桥接类（进程内单例；由 JniInterface / jni/JniNatives 调用）
         // -------------------------------------------------------------
         // 公开方法顺序、签名须与 JniInterface.h 严格一致。
         // 契约表：docs/06-Appendix/01-JNI.md、ZChatIM/docs/JNI-API-Documentation.md
@@ -24,7 +24,8 @@ namespace ZChatIM
         public:
             static JniBridge& Instance();
 
-            bool Initialize();
+            // dataDir / indexDir：须非空；路由至 MM2::Initialize（见 JniSecurityPolicy / 01-JNI.md）。
+            bool Initialize(const std::string& dataDir, const std::string& indexDir);
             void Cleanup();
 
             // =============================================================
@@ -98,6 +99,7 @@ namespace ZChatIM
 
             bool StoreMessageReplyRelation(
                 const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& senderEd25519PublicKey,
                 const std::vector<uint8_t>& messageId,
                 const std::vector<uint8_t>& repliedMsgId,
                 const std::vector<uint8_t>& repliedSenderId,
@@ -317,13 +319,16 @@ namespace ZChatIM
             // 多设备登录
             // =============================================================
 
-            std::vector<uint8_t> RegisterDeviceSession(
+            // 返回 true 且 outKickedSessionId 为空：成功、无设备被踢；非空 16B：被踢出的 device 会话 id。
+            // 返回 false：参数/会话/初始化失败（与「成功无踢」区分；JNI 映射为 Java null）。
+            bool RegisterDeviceSession(
                 const std::vector<uint8_t>& callerSessionId,
                 const std::vector<uint8_t>& userId,
                 const std::vector<uint8_t>& deviceId,
                 const std::vector<uint8_t>& sessionId,
-                uint64_t loginTimeMs,
-                uint64_t lastActiveMs);
+                uint64_t                    loginTimeMs,
+                uint64_t                    lastActiveMs,
+                std::vector<uint8_t>&       outKickedSessionId);
 
             bool UpdateLastActive(
                 const std::vector<uint8_t>& callerSessionId,

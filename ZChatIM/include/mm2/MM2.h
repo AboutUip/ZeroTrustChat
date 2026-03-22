@@ -43,20 +43,31 @@ namespace ZChatIM
             // 初始化
             // =============================================================
             
-            // 初始化：**`dataDir` / `indexDir` 须非空**字符串。`dataDir` 下放 `.zdb`；`indexDir` 下创建 **`zchatim_metadata.db`**（Windows 上 SQLite 打开路径见 `SqliteMetadataDb::Open` 宽路径→UTF-8；JNI/上层宜传 `filesystem::path` 再转窄串时知悉 ACP 限制）。
-            // **`Crypto::Init` 与 `mm2_message_key.bin`** 推迟到首次需加解密的路径（**`EnsureMessageCryptoReadyUnlocked`**），例如 **`StoreMessage` / `StoreMessages` / `RetrieveMessage` / `RetrieveMessages` / `GetSessionMessages`**（**`limit>0`** 时）；**`DeleteMessage` 不经过该路径**（不解密，仅清零 `.zdb` 区间与删索引行）。**`StoreFileChunk` / `GetFileChunk`** 仅需 ZDB+SQLite+SIM 即可完成 **`Initialize`**。
+            // 初始化：**`dataDir` / `indexDir` 须非空**字符串。`dataDir` 下放 `.zdb`；`indexDir` 下创建 **`zchatim_metadata.db`**（Windows 上路径见 **`SqliteMetadataDb::Open`**：**宽路径→UTF-8**；**`ZCHATIM_USE_SQLCIPHER`** 时为 **`Open(path, key32)`**。JNI/上层宜传 `filesystem::path` 再转窄串时知悉 ACP 限制）。
+            // **`ZCHATIM_USE_SQLCIPHER`**（默认 ON，见 CMake）：**`Initialize`** 内会 **`Crypto::Init`** + 加载/创建 **`mm2_message_key.bin`**，再派生 SQLCipher 密钥并打开元数据库（旧版明文库可自动迁移）。**否则**：**`Crypto::Init` 与 `mm2_message_key.bin`** 仍推迟到 **`EnsureMessageCryptoReadyUnlocked`**（首次需消息加解密时），例如 **`StoreMessage` / …**；**`DeleteMessage` 不经过该路径**（不解密，仅清零 `.zdb` 区间与删索引行）。**`StoreFileChunk` / `GetFileChunk`** 在无 SQLCipher 时仅需 ZDB+明文 SQLite+SIM 即可完成 **`Initialize`**。
             // **Windows**：密钥文件为 **ZMK1（DPAPI 封装）**，**兼容**旧版 **32 字节明文**（加载后会尽力改写）；**非 Windows**：仍为 **32 字节明文**（见 **`03-Storage.md`**）。
             bool Initialize(const std::string& dataDir, const std::string& indexDir);
             
             // 清理
             void Cleanup();
+
+            // `Initialize` 成功且未 `Cleanup` 时为 true（供 MM1 判断可否走元数据库持久化）。
+            bool IsInitialized() const;
+
+            // MM1/JNI 用户级小型 BLOB（如 Ed25519 公钥类型 0x45444A31）：写入 mm1_user_kv（见 03-Storage.md）。
+            // 须在 Initialize 之后调用；data 单条上限 16 MiB（与 SqliteMetadataDb 一致）。
+            bool StoreMm1UserDataBlob(const std::vector<uint8_t>& userId, int32_t type, const std::vector<uint8_t>& data);
+            // 成功：无行时 outData 为空；失败返回 false。
+            bool GetMm1UserDataBlob(const std::vector<uint8_t>& userId, int32_t type, std::vector<uint8_t>& outData);
+            // 删到行 true；无行 false。
+            bool DeleteMm1UserDataBlob(const std::vector<uint8_t>& userId, int32_t type);
             
             // =============================================================
             // 消息操作
             // =============================================================
             
             // 存储消息：`sessionId` 须 **`USER_ID_SIZE`（16）** 字节（与 JNI `imSessionId` 约定一致）。
-            // 明文经 **AES-256-GCM**（`mm2::Crypto`：**Windows BCrypt** / **Unix OpenSSL 3**）后写入 `.zdb`；`outMessageId` 为 16 字节随机 id。
+            // 明文经 **AES-256-GCM**（`mm2::Crypto`：**OpenSSL 3**）后写入 `.zdb`；`outMessageId` 为 16 字节随机 id。
             // 单条明文上限 **`ZDB_MAX_WRITE_SIZE - NONCE_SIZE - AUTH_TAG_SIZE`**。失败时查 **`LastError()`**。
             bool StoreMessage(const std::vector<uint8_t>& sessionId, const std::vector<uint8_t>& payload, std::vector<uint8_t>& outMessageId);
             
@@ -170,6 +181,58 @@ namespace ZChatIM
             // cleanupExpiredFriendRequests(nowMs): 清理过期请求记录
             bool CleanupExpiredFriendRequests(uint64_t nowMs);
 
+            // MM1 好友列表 / 删好友：基于 friend_requests status=1 的边（无单独 friends 表）。
+            bool GetFriendRequestRowForMm1(
+                const std::vector<uint8_t>& requestId,
+                std::vector<uint8_t>&       outFromUser,
+                std::vector<uint8_t>&       outToUser,
+                int32_t&                    outStatus);
+            bool ListAcceptedFriendUserIdsForMm1(
+                const std::vector<uint8_t>& userId,
+                std::vector<std::vector<uint8_t>>& outFriends);
+            bool DeleteAcceptedFriendshipBetweenForMm1(
+                const std::vector<uint8_t>& userId,
+                const std::vector<uint8_t>& friendId);
+
+            // =============================================================
+            // 群组：`group_members` + `mm2_group_display`（**`GroupManager`** 建群/成员；**`GroupNameManager`** 改名）
+            // =============================================================
+            bool CreateGroupSeedForMm1(
+                const std::vector<uint8_t>& groupId,
+                const std::vector<uint8_t>& creatorId,
+                const std::string&          nameUtf8,
+                uint64_t                    nowSeconds);
+            bool UpsertGroupMemberForMm1(
+                const std::vector<uint8_t>& groupId,
+                const std::vector<uint8_t>& userId,
+                int32_t                     role,
+                int64_t                     joinedAtSeconds);
+            bool DeleteGroupMemberForMm1(const std::vector<uint8_t>& groupId, const std::vector<uint8_t>& userId);
+            bool ListGroupMemberUserIdsForMm1(
+                const std::vector<uint8_t>& groupId,
+                std::vector<std::vector<uint8_t>>& outUserIds);
+            bool GetGroupMemberRoleForMm1(
+                const std::vector<uint8_t>& groupId,
+                const std::vector<uint8_t>& userId,
+                int32_t&                    outRole,
+                int64_t&                    outJoinedAt);
+            bool GetGroupMemberExistsForMm1(
+                const std::vector<uint8_t>& groupId,
+                const std::vector<uint8_t>& userId,
+                bool&                       outExists);
+
+            // 群密钥信封 **`ZGK1`**：`group_id` **复用为** **`data_blocks`** 的 **`data_id`（16B）chunk 0**（与随机 **`message_id`** collision 概率可忽略；语义上专指群密钥块）。
+            // 磁盘布局：**`ZGK1`(4) ‖ `epoch_s` uint64 BE(8) ‖ `CRYPTO_KEY_SIZE` 随机(32)**，共 **44** 字节；**`group_data`** 指向该块（**`03-Storage.md`**）。
+            bool UpsertGroupKeyEnvelopeForMm1(const std::vector<uint8_t>& groupId, uint64_t epochSeconds);
+            // **禁止经 JNI 裸暴露**：读出 **含 32B 密钥** 的 **`ZGK1`**；仅 **native 自测** 或未来 **MM1 鉴权后的受控路径**。
+            bool TryGetGroupKeyEnvelopeForMm1(const std::vector<uint8_t>& groupId, std::vector<uint8_t>& outEnvelope);
+
+            // **禁止 JNI / 产品调用**：仅供 **`ZChatIM --test`** 注入 **`friend_requests` accepted** 单边（**无**真实验签语义）。
+            bool SeedAcceptedFriendshipForSelfTest(
+                const std::vector<uint8_t>& fromUserId,
+                const std::vector<uint8_t>& toUserId,
+                uint64_t                    nowSeconds);
+
             // =============================================================
             // 群组名称元数据（groupName 更新）
             // =============================================================
@@ -182,6 +245,27 @@ namespace ZChatIM
             bool GetGroupName(
                 const std::vector<uint8_t>& groupId,
                 std::string& outGroupName);
+
+            // =============================================================
+            // 群禁言（**`mm2_group_mute`**；**MM1 `GroupMuteManager`**）
+            // =============================================================
+            bool UpsertGroupMuteForMm1(
+                const std::vector<uint8_t>& groupId,
+                const std::vector<uint8_t>& userId,
+                int64_t                     startMs,
+                int64_t                     durationSeconds,
+                const std::vector<uint8_t>& mutedBy,
+                const std::vector<uint8_t>& reason);
+            bool DeleteGroupMuteForMm1(const std::vector<uint8_t>& groupId, const std::vector<uint8_t>& userId);
+            bool GetGroupMuteRowForMm1(
+                const std::vector<uint8_t>& groupId,
+                const std::vector<uint8_t>& userId,
+                bool&                       outExists,
+                int64_t&                    outStartMs,
+                int64_t&                    outDurationS,
+                std::vector<uint8_t>&       outMutedBy,
+                std::vector<uint8_t>&       outReason);
+            bool DeleteExpiredGroupMutesForMm1(int64_t nowMs);
             
             // =============================================================
             // 会话管理
@@ -296,6 +380,8 @@ namespace ZChatIM
             // 已持有 m_stateMutex；`dataId16` 须为 MESSAGE_ID_SIZE 字节
             bool PutDataBlockBlobUnlocked(const std::vector<uint8_t>& dataId16, int32_t chunkIdx, const std::vector<uint8_t>& blob);
             bool GetDataBlockBlobUnlocked(const std::vector<uint8_t>& dataId16, int32_t chunkIdx, std::vector<uint8_t>& outBlob);
+            // 已持有 m_stateMutex；写 **`ZGK1`** 信封并 **`UpsertGroupData`**；失败时尽力回滚 **`data_blocks` 写入**。
+            bool WriteGroupKeyEnvelopeUnlocked(const std::vector<uint8_t>& groupId, uint64_t epochSeconds);
 
             // `.zdb` 已成功追加 `[offset,offset+blobLen)` 后，若 SQLite 等后续失败：清零该区间、删除 `data_blocks`（若仍有行）、`UpsertZdbFile` 刷新 used_size（v1 不收缩头内 usedSize，仅覆盖为 0）。
             bool RevertFailedPutDataBlockUnlocked(

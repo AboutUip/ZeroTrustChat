@@ -12,10 +12,10 @@ namespace ZChatIM {
         class GroupNameManager {
         public:
             // UpdateGroupName:
-            // - updaterId: 群主/管理员 ID
-            // - newGroupName: 新群名（UTF-8）
-            // - nowMs: 当前时间（用于 1次/分钟 频率限制等）
-            // 返回 true 表示允许并成功发起更新流程（实现层完成写入 .zdb 与广播）
+            // - updaterId: 群主/管理员 ID（须为 **`group_members`** 中 **role 1/2**）
+            // - newGroupName: 新群名（UTF-8，**非空**，**≤2048 字节**，与 **`CreateGroup`** 一致）
+            // - nowMs:  wall 毫秒；落库 **`mm2_group_display.updated_s`** 使用 **`nowMs / 1000`**（截断）
+            // 返回 true 表示已写入 **`MM2::UpdateGroupName`**（元数据 SQLite；**非** `.zdb` 消息块）
             bool UpdateGroupName(
                 const std::vector<uint8_t>& groupId,
                 const std::vector<uint8_t>& updaterId,

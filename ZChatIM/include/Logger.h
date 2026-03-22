@@ -40,7 +40,7 @@ namespace ZChatIM
         void Error(const char* format, ...);
         void Fatal(const char* format, ...);
         
-        // 设置日志文件 (可选)
+        // 设置日志文件 (可选)；**`filePath` 为空** 时 **`false`**（不关 stderr，仅不打开文件）
         bool SetLogFile(const std::string& filePath);
         
         // 关闭日志文件

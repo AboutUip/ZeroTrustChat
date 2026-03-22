@@ -4,50 +4,70 @@
 
 cmake_minimum_required(VERSION 3.20)
 
-# 项目信息（含 C：thirdparty/sqlite/sqlite3.c 为 C 源文件）
+# 项目信息（**`ZCHATIM_USE_SQLCIPHER=OFF`** 时编 **`thirdparty/sqlite/sqlite3.c`**，需 **C**；默认 ON 为 SQLCipher，无该 amalgamation）
 project(ZChatIM VERSION 1.0.0 LANGUAGES CXX C)
 
 # =========================
 # Options
 # =========================
+# 元数据索引 **`zchatim_metadata.db`**：默认 **SQLCipher**（页级加密 + 固定「严格」PRAGMA，见 `docs/02-Core/03-Storage.md` §4.2）。
+# 关闭则回退 **`thirdparty/sqlite/sqlite3.c`** 明文库（仅建议本地调试）。
+option(ZCHATIM_USE_SQLCIPHER "Link SQLCipher for encrypted metadata SQLite (see docs)" ON)
 option(ZCHATIM_BUILD_JNI "Build JNI shared library" ON)
 option(ZCHATIM_BUILD_EXE "Build console executable" ON)
-# Default OFF: 仓库默认不提交 tests/，发行/提交构建仅 main.cpp；--test* 运行会提示未编入测试。
-# 本地自测：cmake -DZCHATIM_BUILD_TESTS=ON（须存在 ZChatIM/tests/*.cpp）。
+# Default OFF：不编译 tests/*.cpp，减小可执行体积、缩短链接时间；**`--test*`** 会提示未编入（见 main.cpp）。
+# ON：追加 tests/*.cpp 进 ZChatIM.exe，**`--test`** 跑全量。
 option(ZCHATIM_BUILD_TESTS "Compile in-tree tests into ZChatIM.exe" OFF)
 
-# 密码学后端（与 Crypto.cpp 一致）：
-# - Windows：BCrypt + CryptoAPI（AES-GCM / PBKDF2 / RNG；Auth 会话随机）— **不需要** OpenSSL。
-# - Linux / macOS：OpenSSL 3 libcrypto（同上算法；与 Windows **磁盘格式字节兼容**）。
-if(WIN32)
-    set(ZCHATIM_MM2_CRYPTO_BACKEND "BCrypt")
-else()
-    set(ZCHATIM_MM2_CRYPTO_BACKEND "OpenSSL3")
-    if(NOT OPENSSL_ROOT_DIR AND DEFINED ENV{OPENSSL_ROOT_DIR})
-        file(TO_CMAKE_PATH "$ENV{OPENSSL_ROOT_DIR}" _zchatim_openssl_root)
-        set(OPENSSL_ROOT_DIR "${_zchatim_openssl_root}" CACHE PATH "OpenSSL installation root (override if FindOpenSSL fails)")
-    endif()
-    if(NOT OPENSSL_ROOT_DIR)
-        set(_zchatim_openssl_reserved "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/openssl/versions/current")
-        if(EXISTS "${_zchatim_openssl_reserved}/include/openssl/ssl.h")
-            set(OPENSSL_ROOT_DIR "${_zchatim_openssl_reserved}" CACHE PATH "OpenSSL root (thirdparty/openssl/versions/current)")
-            message(STATUS "OPENSSL_ROOT_DIR (auto from reserved folder): ${_zchatim_openssl_reserved}")
-        endif()
-    endif()
-    find_package(OpenSSL 3.0 QUIET)
-    if(NOT TARGET OpenSSL::Crypto)
-        message(FATAL_ERROR
-            "Could not find OpenSSL 3.0 or newer (Linux/macOS MM2 crypto + Auth RNG).\n"
-            "\n"
-            "Fix:\n"
-            "  Linux: sudo apt install libssl-dev (or distro equivalent)\n"
-            "  macOS: brew install openssl@3 && export OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)\n"
-            "  Or set OPENSSL_ROOT_DIR to a tree with include/openssl/ssl.h and libcrypto.\n"
-            "\n"
-            "Windows builds use BCrypt and do not need this step.\n"
-            "See docs/07-Engineering/01-Build-ZChatIM.md\n"
+# 密码学后端（**全平台 OpenSSL 3**）：
+# - **MM2 `Crypto.cpp`**：**EVP_aes_256_gcm** / **PKCS5_PBKDF2_HMAC** / **RAND_bytes**。
+# - **`common/Ed25519.cpp`**：**EVP_PKEY_ED25519** 验签。
+# - **`common/Random.cpp`**、**`AuthSessionManager`** 安全随机：**RAND_bytes**（失败再 **/dev/urandom** 仅 Unix）。
+# - **SQLCipher**：**OpenSSL::SSL** + **OpenSSL::Crypto**（默认 ON）。
+# Windows：**无系统 OpenSSL** → 将 **install 树**放到 **`thirdparty/openssl/prebuilt/windows-x64/openssl/`** 等（见 **`thirdparty/openssl/LAYOUT.md`**）或 **`OPENSSL_ROOT_DIR`**。
+set(ZCHATIM_MM2_CRYPTO_BACKEND "OpenSSL3")
+if(NOT OPENSSL_ROOT_DIR AND DEFINED ENV{OPENSSL_ROOT_DIR})
+    file(TO_CMAKE_PATH "$ENV{OPENSSL_ROOT_DIR}" _zchatim_openssl_root)
+    set(OPENSSL_ROOT_DIR "${_zchatim_openssl_root}" CACHE PATH "OpenSSL installation root (override if FindOpenSSL fails)")
+endif()
+if(NOT OPENSSL_ROOT_DIR)
+    set(_zchatim_ssl_candidates "")
+    if(WIN32)
+        list(APPEND _zchatim_ssl_candidates
+            "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/openssl/prebuilt/windows-x64/openssl"
+            "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/openssl/builds/windows-x64/install"
+            "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/openssl/versions/win64/current"
+            "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/openssl/versions/current"
+        )
+    else()
+        list(APPEND _zchatim_ssl_candidates
+            "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/openssl/versions/current"
         )
     endif()
+    foreach(_root IN LISTS _zchatim_ssl_candidates)
+        if(EXISTS "${_root}/include/openssl/ssl.h")
+            set(OPENSSL_ROOT_DIR "${_root}" CACHE PATH "OpenSSL root (auto from thirdparty layout)")
+            message(STATUS "OPENSSL_ROOT_DIR (auto): ${_root}")
+            break()
+        endif()
+    endforeach()
+endif()
+find_package(OpenSSL 3.0 REQUIRED)
+if(OPENSSL_ROOT_DIR)
+    message(STATUS "OPENSSL_ROOT_DIR (effective): ${OPENSSL_ROOT_DIR}")
+endif()
+if(NOT TARGET OpenSSL::Crypto)
+    message(FATAL_ERROR
+        "Could not find OpenSSL 3.0 or newer.\n"
+        "\n"
+        "Fix:\n"
+        "  Linux: sudo apt install libssl-dev\n"
+        "  macOS: brew install openssl@3 && export OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)\n"
+        "  Windows: install tree with include/openssl/ssl.h + libcrypto →\n"
+        "    thirdparty/openssl/prebuilt/windows-x64/openssl/  (see thirdparty/openssl/LAYOUT.md)\n"
+        "    or set OPENSSL_ROOT_DIR.\n"
+        "See docs/07-Engineering/01-Build-ZChatIM.md\n"
+    )
 endif()
 
 # C++ 标准配置
@@ -72,16 +92,79 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 include_directories(include)
 
 # =========================
-# SQLite amalgamation (metadata index, docs/02-Core/03-Storage.md)
+# SQLite / SQLCipher（元数据索引，docs/02-Core/03-Storage.md）
 # =========================
-add_library(sqlite3 STATIC
-    thirdparty/sqlite/sqlite3.c
-)
-target_include_directories(sqlite3 PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/sqlite
-)
-if(MSVC)
-    target_compile_options(sqlite3 PRIVATE /wd4244 /wd4267 /wd4018 /wd4310)
+# **不使用 vcpkg / 系统 sqlcipher 包**：`ZCHATIM_USE_SQLCIPHER=ON` 时**仅**接受树内 amalgamation。
+set(_zchatim_sqlcipher_vendor_dir "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/sqlcipher")
+set(_zchatim_sqlcipher_prebuilt "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/sqlcipher/prebuilt/windows-x64/amalgamation")
+if(WIN32
+   AND EXISTS "${_zchatim_sqlcipher_prebuilt}/sqlite3.c"
+   AND EXISTS "${_zchatim_sqlcipher_prebuilt}/sqlite3.h")
+    set(_zchatim_sqlcipher_vendor_dir "${_zchatim_sqlcipher_prebuilt}")
+    message(STATUS "SQLCipher amalgamation dir: prebuilt/windows-x64/amalgamation")
+endif()
+
+if(ZCHATIM_USE_SQLCIPHER)
+    message(STATUS "SQLCipher amalgamation path: ${_zchatim_sqlcipher_vendor_dir}")
+    if(NOT EXISTS "${_zchatim_sqlcipher_vendor_dir}/sqlite3.c"
+       OR NOT EXISTS "${_zchatim_sqlcipher_vendor_dir}/sqlite3.h")
+        message(FATAL_ERROR
+            "ZCHATIM_USE_SQLCIPHER=ON requires SQLCipher amalgamation in-tree (no vcpkg / no pkg-config sqlcipher):\n"
+            "  ${_zchatim_sqlcipher_vendor_dir}/sqlite3.c\n"
+            "  ${_zchatim_sqlcipher_vendor_dir}/sqlite3.h\n"
+            "See thirdparty/sqlcipher/README.md (optional: prebuilt/windows-x64/amalgamation/)\n"
+            "Or -DZCHATIM_USE_SQLCIPHER=OFF for plaintext metadata (dev only).\n"
+        )
+    endif()
+
+    add_library(zchatim_sqlcipher STATIC
+        "${_zchatim_sqlcipher_vendor_dir}/sqlite3.c"
+    )
+    target_include_directories(zchatim_sqlcipher PUBLIC
+        "${_zchatim_sqlcipher_vendor_dir}"
+    )
+    # 与 SQLCipher 官方 amalgamation 要求一致（见 amalgamation 内 #error 与 thirdparty/sqlcipher/README.md）
+    target_compile_definitions(zchatim_sqlcipher PRIVATE
+        SQLITE_HAS_CODEC
+        SQLITE_TEMP_STORE=2
+        SQLITE_THREADSAFE=2
+        SQLITE_EXTRA_INIT=sqlcipher_extra_init
+        SQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown
+        SQLITE_ENABLE_RTREE
+        SQLITE_ENABLE_UNLOCK_NOTIFY
+        SQLITE_ENABLE_COLUMN_METADATA
+    )
+    # amalgamation 中 SQLCipher 段（~109625 行）使用 uint64_t，但 #include <stdint.h> 在更后（~14677）才出现；
+    # 强制先包含 stdint.h，否则 MSVC 会报 xoshiro_s / '[' 等一串语法错误。
+    if(MSVC)
+        target_compile_options(
+            zchatim_sqlcipher PRIVATE
+            /FIstdint.h
+            /wd4244 /wd4267 /wd4018 /wd4310
+        )
+    else()
+        target_compile_options(zchatim_sqlcipher PRIVATE -include stdint.h)
+    endif()
+    target_link_libraries(zchatim_sqlcipher PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+    if(UNIX)
+        find_package(Threads REQUIRED)
+        target_link_libraries(zchatim_sqlcipher PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            target_link_libraries(zchatim_sqlcipher PRIVATE m)
+        endif()
+    endif()
+    set(_zchatim_sqlite_link_target zchatim_sqlcipher)
+else()
+    add_library(sqlite3 STATIC
+        thirdparty/sqlite/sqlite3.c
+    )
+    target_include_directories(sqlite3 PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/sqlite
+    )
+    if(MSVC)
+        target_compile_options(sqlite3 PRIVATE /wd4244 /wd4267 /wd4018 /wd4310)
+    endif()
+    set(_zchatim_sqlite_link_target sqlite3)
 endif()
 
 # =========================
@@ -89,6 +172,7 @@ endif()
 # =========================
 add_library(ZChatIMCore STATIC
     src/common/Utils.cpp
+    src/common/Ed25519.cpp
     src/common/Memory.cpp
     src/common/String.cpp
     src/common/File.cpp
@@ -98,7 +182,18 @@ add_library(ZChatIMCore STATIC
     src/mm1/MM1.cpp
     src/mm1/MM1_security_submodules.cpp
     src/mm1/managers/AuthSessionManager.cpp
+    src/mm1/managers/MessageReplyManager.cpp
+    src/mm1/managers/MessageRecallManager.cpp
+    src/mm1/managers/UserDataManager.cpp
+    src/mm1/managers/FriendManager.cpp
+    src/mm1/managers/GroupManager.cpp
+    src/mm1/managers/GroupNameManager.cpp
+    src/mm1/managers/GroupMuteManager.cpp
+    src/mm1/managers/FriendVerificationManager.cpp
+    src/mm1/managers/MM1_manager_stubs.cpp
     src/mm1/managers/SessionActivityManager.cpp
+    src/jni/JniBridge.cpp
+    src/jni/JniInterface.cpp
     src/mm2/MM2.cpp
     src/mm2/crypto/Sha256.cpp
     src/mm2/storage/Crypto.cpp
@@ -112,10 +207,37 @@ add_library(ZChatIMCore STATIC
 target_include_directories(ZChatIMCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+# **`SQLITE_HAS_CODEC`**：包含 **`sqlite3.h`** 时暴露 **`sqlite3_key_v2`** 等 SQLCipher API（与 **`zchatim_sqlcipher`** 编译 **`sqlite3.c`** 时一致）。
+target_compile_definitions(ZChatIMCore PUBLIC
+    $<$<BOOL:${ZCHATIM_USE_SQLCIPHER}>:ZCHATIM_USE_SQLCIPHER=1>
+    $<$<BOOL:${ZCHATIM_USE_SQLCIPHER}>:SQLITE_HAS_CODEC=1>
+)
+
+target_link_libraries(ZChatIMCore PUBLIC OpenSSL::Crypto PRIVATE ${_zchatim_sqlite_link_target})
 if(WIN32)
-    target_link_libraries(ZChatIMCore PUBLIC bcrypt advapi32 crypt32 PRIVATE sqlite3)
-else()
-    target_link_libraries(ZChatIMCore PUBLIC OpenSSL::Crypto PRIVATE sqlite3)
+    # DPAPI：**mm2_message_key.bin**（**`MM2.cpp`** — **CryptProtectData** / **CryptUnprotectData**）
+    target_link_libraries(ZChatIMCore PUBLIC crypt32)
+elseif(APPLE)
+    # **ZMK3**：**Keychain** 存 **32B 封装密钥**（**`MM2_message_key_darwin.cpp`**）
+    target_sources(ZChatIMCore PRIVATE src/mm2/MM2_message_key_darwin.cpp)
+    target_link_libraries(ZChatIMCore PRIVATE "-framework" "CoreFoundation" "-framework" "Security")
+endif()
+
+# 供 `mm1::security::JniSecurity` 使用 `jni.h`（与 ZChatIMJNI 同源；仅头文件 + 条件编译）。
+if(ZCHATIM_BUILD_JNI)
+    find_package(JNI QUIET)
+    if(NOT JNI_FOUND AND DEFINED ENV{JAVA_HOME})
+        set(_zchatim_java_home $ENV{JAVA_HOME})
+        set(JNI_INCLUDE_DIRS
+            "${_zchatim_java_home}/include"
+            "${_zchatim_java_home}/include/win32"
+        )
+        set(JNI_FOUND TRUE)
+    endif()
+    if(JNI_FOUND)
+        target_include_directories(ZChatIMCore PRIVATE ${JNI_INCLUDE_DIRS})
+        target_compile_definitions(ZChatIMCore PRIVATE ZCHATIM_HAVE_JNI=1)
+    endif()
 endif()
 
 # =========================
@@ -143,6 +265,7 @@ if(ZCHATIM_BUILD_JNI)
     if(ZCHATIM_BUILD_JNI)
         add_library(ZChatIMJNI SHARED
             jni/ZChatIMJNI.cpp
+            jni/JniNatives.cpp
         )
 
         target_include_directories(ZChatIMJNI PRIVATE
@@ -177,6 +300,7 @@ if(ZCHATIM_BUILD_EXE)
             tests/common_tools_test.cpp
             tests/mm1_managers_test.cpp
             tests/mm2_fifty_scenarios_test.cpp
+            tests/jni_im_smoke_test.cpp
         )
     endif()
     add_executable(ZChatIM ${_zchatim_exe_sources})
@@ -210,7 +334,12 @@ message(STATUS "ZChatIM Build Configuration")
 message(STATUS "===============================================")
 message(STATUS "Platform: ${CMAKE_SYSTEM_NAME}")
 message(STATUS "MM2 crypto backend: ${ZCHATIM_MM2_CRYPTO_BACKEND}")
-if(NOT WIN32)
+if(ZCHATIM_USE_SQLCIPHER)
+    message(STATUS "Metadata SQLite: SQLCipher (thirdparty/sqlcipher amalgamation, no vcpkg)")
+else()
+    message(STATUS "Metadata SQLite: vanilla sqlite3.c amalgamation (plaintext)")
+endif()
+if(OPENSSL_VERSION)
     message(STATUS "OpenSSL: ${OPENSSL_VERSION}")
 endif()
 message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID}")

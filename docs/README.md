@@ -26,9 +26,9 @@
 
 **已对齐结论（摘要）**：
 
-- **IM 消息**：**`StoreMessage`** 将 **AES-GCM** 密文写入 **`.zdb`**（Windows：**BCrypt**；Linux/macOS：**OpenSSL 3**；磁盘格式一致），**`im_messages` + `data_blocks`** 位于 **SQLite**；进程重启后数据**默认保留**，除非执行 **`Cleanup` / `CleanupAllData`** 或删除数据目录。
+- **IM 消息**：**`StoreMessage`** 将 **AES-GCM** 密文写入 **`.zdb`**（**全平台 OpenSSL 3**；磁盘格式一致），**`im_messages` + `data_blocks`** 位于 **元数据 SQLite**（**默认 `ZCHATIM_USE_SQLCIPHER`**：**SQLCipher** 页加密，见 **`03-Storage.md` §4.2**）；进程重启后数据**默认保留**，除非执行 **`Cleanup` / `CleanupAllData`** 或删除数据目录。
 - **文件分片**：**`StoreFileChunk`** 同样写入 **`.zdb`** 并登记索引；与「仅内存缓存」类叙述冲突时，**以本仓库实现与本文第3节为准**。
-- **续传、好友请求、群显示名、回复/编辑元数据等**：由 **MM2 + `SqliteMetadataDb`（`user_version=4`）** 持久化（见 **`03-Storage.md`**、**`05` 第2.1节**）。**JNI 业务导出**仍可能为桩：桥接层须遵守 **`01-JNI.md`** 中 MM1 校验再落 MM2 等约定。
+- **续传、好友请求、群显示名、群禁言（`mm2_group_mute`）、回复/编辑元数据、MM1/JNI UserData（`mm1_user_kv`）等**：由 **MM2 + `SqliteMetadataDb`（当前 `user_version=6`）** 持久化（见 **`03-Storage.md`**、**`05` 第2.1节**）。**群基础**（**`createGroup`/`inviteMember`/`…`/`updateGroupKey`**）已 **`mm1::GroupManager` 实装**（**`ZGK1`** 等）；**`updateGroupName`** 已 **`GroupNameManager`**；**`muteMember`/`isMuted`/`unmuteMember`** 已 **`GroupMuteManager`**（见 **`05` §3**）；**其余 JNI 业务**仍可能为桩：桥接层须遵守 **`01-JNI.md`** 中 MM1 校验再落 MM2 等约定。
 - **MM1 会话表、认证限流等**：以各业务文档为准，多为**进程内状态**，与 MM2 磁盘态**并存、不可混用叙述**。
 
 旧资料中「服务重启导致聊天消息丢失」仅适用于**无本地 MM2 持久化**的部署模型；**默认指本仓库客户端实现时，该结论不成立**。

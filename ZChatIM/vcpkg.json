@@ -1,6 +1,0 @@
-{
-  "name": "zchatim",
-  "version-string": "1.0.0",
-  "description": "ZChatIM: openssl port is for Linux/macOS toolchains; Windows MM2 uses BCrypt (no OpenSSL link).",
-  "dependencies": ["openssl"]
-}

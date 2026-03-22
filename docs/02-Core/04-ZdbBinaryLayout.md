@@ -10,7 +10,7 @@
 | 头部 | **64 字节** `ZdbHeader`，其后为 **payload** 区 |
 | 写入路径 | **仅尾部追加**（`AppendRaw` / `ZdbManager::WriteData`）；**容器层无加密**、无空闲块回收表（payload 可为**明文分片**或 **MM2 `StoreMessage` 写入的 AES-GCM 密文包**，语义见 **`03-Storage.md` 第七节 / 第2.6节**） |
 | 头部校验域 | `checksum[32]` 预留，v1 填 **0** |
-| 尾部 | 创建时头之后至文件尾用 **`Crypto::GenerateSecureRandom`** 预填**高熵字节**（**Windows：BCrypt**；**Unix：`RAND_bytes`** + **`/dev/urandom`** 后备）；**`AllocateSpace` / `DeleteData` 等预留区仍写 0x00**（见 `ZdbFile`） |
+| 尾部 | 创建时头之后至文件尾用 **`Crypto::GenerateSecureRandom`** 预填**高熵字节**（**OpenSSL `RAND_bytes`**；**Unix** 可再读 **`/dev/urandom`**）；**任一分块取随机失败则 `Create` 整体失败**（不写半初始化文件）；**`AllocateSpace` / `DeleteData` 等预留区仍写 0x00**（见 `ZdbFile`） |
 | 打开校验 | **`ZdbFile::Open` / `Create`**：`version==1`，**磁盘文件字节数**须等于 **`header.totalSize`**（即 **`ZDB_FILE_SIZE`**），**`usedSize`** 须在 **`[64, totalSize]`** |
 
 ## 2. `ZdbHeader`（64 字节，`#pragma pack(push, 1)`）

@@ -116,10 +116,9 @@ cmake --build build --config Release
 
 | 环境 | 说明 |
 | :---: | :--- |
-| **Windows** | MM2 使用 **BCrypt**，无需 OpenSSL |
-| **Linux / macOS** | 须 **OpenSSL 3.x**；缺失时 CMake 报错并提示修复 |
+| **全平台** | **OpenSSL 3.x**（**MM2** AES-GCM / PBKDF2 / RNG、**MM1** Ed25519 **`EVP`**、**SQLCipher**、**`common::Random`** 等）；**Windows** 另 **`crypt32`**（**DPAPI** `mm2_message_key.bin`）；缺失时 CMake **`FATAL_ERROR`** |
 | **VS 多配置** | 命令行加 **`--config Release`**（或 IDE 中选 Release） |
-| **树内测试** | **默认不编**（**`ZCHATIM_BUILD_TESTS` 默认 `OFF`**，`tests/` 不入库）；本地自测：**`-DZCHATIM_BUILD_TESTS=ON`** 且自备 **`ZChatIM/tests/*.cpp`** → [构建说明 §7](docs/07-Engineering/01-Build-ZChatIM.md) |
+| **树内测试** | 默认 **`ZCHATIM_BUILD_TESTS=OFF`**（仅 **`main.cpp`**）；需要自检时 **`-DZCHATIM_BUILD_TESTS=ON`** 编 **`ZChatIM/tests/*.cpp`**，**`ZChatIM --test`** 一次跑 common + MM1/MM2 + **minimal MM2** + MM2-50 + JNI IM smoke → [构建说明 §7](docs/07-Engineering/01-Build-ZChatIM.md) |
 
 ---
 

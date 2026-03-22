@@ -1,6 +1,7 @@
 #include "common/Utils.h"
 
 #include <cstring>
+#include <limits>
 
 namespace ZChatIM::common {
 
@@ -56,7 +57,10 @@ namespace ZChatIM::common {
     {
         if (length > 0 && data == nullptr)
             return {};
-        return std::string(reinterpret_cast<const char*>(data), reinterpret_cast<const char*>(data) + length);
+        std::string out;
+        if (length > out.max_size())
+            return {};
+        return std::string(reinterpret_cast<const char*>(data), length);
     }
 
     uint32_t Utils::BigEndianToLittleEndian(uint32_t value)

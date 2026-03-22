@@ -20,6 +20,17 @@
 #include <string>
 #include <utility>
 
+#if !defined(_WIN32)
+#    include <unistd.h>
+#endif
+
+#if defined(__APPLE__)
+namespace ZChatIM::mm2::detail {
+    bool Mm2DarwinGetOrCreateMessageWrapKey(const std::string& indexDirUtf8, std::vector<uint8_t>& out32, std::string& err);
+    bool Mm2DarwinDeleteMessageWrapKey(const std::string& indexDirUtf8, std::string& err);
+}
+#endif
+
 #ifdef _WIN32
 #    ifndef NOMINMAX
 #        define NOMINMAX
@@ -217,7 +228,280 @@ namespace ZChatIM::mm2 {
             }
             return true;
         }
+#endif // _WIN32
+
+#if !defined(_WIN32)
+        // Unix：**ZMK2**（魔数 **ZMK\2**）= **SHA256(machine-id ‖ uid ‖ indexDir)** 派生 **32B 封装密钥** + **AES-256-GCM** 保护消息主密钥。
+        // Apple：**ZMK3**（**ZMK\3**）= **Keychain** 随机 **32B 封装密钥** + **AES-256-GCM**（见 **`MM2_message_key_darwin.cpp`**）。
+        // 载荷：**nonce(12) ‖ ciphertext(32) ‖ tag(16)**，与 **`Crypto::EncryptMessage`** 线格式一致。
+        static constexpr uint8_t kMm2MessageKeyMagicZmk1[4] = {'Z', 'M', 'K', 1};
+        static constexpr uint8_t kMm2MessageKeyMagicZmk2[4] = {'Z', 'M', 'K', 2};
+        static constexpr uint8_t kMm2MessageKeyMagicZmk3[4] = {'Z', 'M', 'K', 3};
+        static constexpr uint32_t kZmk23InnerPayloadBytes =
+            static_cast<uint32_t>(ZChatIM::NONCE_SIZE + ZChatIM::CRYPTO_KEY_SIZE + ZChatIM::AUTH_TAG_SIZE);
+
+        static bool ReadAllBytesMessageKeyFilePosix(const std::filesystem::path& keyPath, std::vector<uint8_t>& fileBytes, std::string& errOut)
+        {
+            fileBytes.clear();
+            std::ifstream in(keyPath, std::ios::binary);
+            if (!in) {
+                errOut = "cannot open mm2_message_key.bin for read";
+                return false;
+            }
+            in.seekg(0, std::ios::end);
+            const std::streamoff sz = in.tellg();
+            if (sz < 0) {
+                errOut = "mm2_message_key.bin size query failed";
+                return false;
+            }
+            in.seekg(0, std::ios::beg);
+            if (sz == 0) {
+                errOut = "mm2_message_key.bin is empty";
+                return false;
+            }
+            fileBytes.resize(static_cast<size_t>(sz));
+            in.read(reinterpret_cast<char*>(fileBytes.data()), static_cast<std::streamsize>(fileBytes.size()));
+            if (in.gcount() != static_cast<std::streamsize>(fileBytes.size())) {
+                errOut = "mm2_message_key.bin read incomplete";
+                fileBytes.clear();
+                return false;
+            }
+            return true;
+        }
+
+        static void ReadMachineIdLine(std::string& out)
+        {
+            out.clear();
+            static const char* paths[] = {"/etc/machine-id", "/var/lib/dbus/machine-id"};
+            for (const char* p : paths) {
+                std::ifstream f(p);
+                if (!f) {
+                    continue;
+                }
+                if (!std::getline(f, out)) {
+                    out.clear();
+                    continue;
+                }
+                while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) {
+                    out.pop_back();
+                }
+                if (!out.empty()) {
+                    return;
+                }
+            }
+            out = "ZChatIM|no-machine-id";
+        }
+
+        static bool DeriveUnixWrapKeyFromMachineAndPath(const std::string& indexDirUtf8, uint8_t outWrap32[ZChatIM::CRYPTO_KEY_SIZE], std::string& errOut)
+        {
+            errOut.clear();
+            std::string mid;
+            ReadMachineIdLine(mid);
+            const uint32_t uid32 = static_cast<uint32_t>(getuid());
+            std::vector<uint8_t> material;
+            static const char dom[] = "ZChatIM|MM2|UnixMessageKeyWrap|v2|";
+            material.insert(material.end(), dom, dom + sizeof(dom) - 1U);
+            material.insert(material.end(), mid.begin(), mid.end());
+            material.push_back('|');
+            material.push_back(static_cast<uint8_t>((uid32 >> 24) & 0xFFU));
+            material.push_back(static_cast<uint8_t>((uid32 >> 16) & 0xFFU));
+            material.push_back(static_cast<uint8_t>((uid32 >> 8) & 0xFFU));
+            material.push_back(static_cast<uint8_t>(uid32 & 0xFFU));
+            material.push_back('|');
+            material.insert(material.end(), indexDirUtf8.begin(), indexDirUtf8.end());
+            std::vector<uint8_t> h = Crypto::HashSha256(material.data(), material.size());
+            if (h.size() != ZChatIM::CRYPTO_KEY_SIZE) {
+                errOut = "DeriveUnixWrapKey: HashSha256 failed";
+                return false;
+            }
+            std::memcpy(outWrap32, h.data(), ZChatIM::CRYPTO_KEY_SIZE);
+            return true;
+        }
+
+        static bool BuildZmk23File(
+            const uint8_t                     magic[4],
+            const uint8_t                     wrapKey[ZChatIM::CRYPTO_KEY_SIZE],
+            const uint8_t                     master32[ZChatIM::CRYPTO_KEY_SIZE],
+            std::vector<uint8_t>&             fileOut,
+            std::string&                      errOut)
+        {
+            fileOut.clear();
+            errOut.clear();
+            std::vector<uint8_t> nonce = Crypto::GenerateNonce(ZChatIM::NONCE_SIZE);
+            if (nonce.size() != ZChatIM::NONCE_SIZE) {
+                errOut = "BuildZmk23File: GenerateNonce failed";
+                return false;
+            }
+            std::vector<uint8_t> ciphertext;
+            uint8_t              tag[ZChatIM::AUTH_TAG_SIZE]{};
+            if (!Crypto::EncryptMessage(
+                    master32,
+                    ZChatIM::CRYPTO_KEY_SIZE,
+                    wrapKey,
+                    ZChatIM::CRYPTO_KEY_SIZE,
+                    nonce.data(),
+                    ZChatIM::NONCE_SIZE,
+                    ciphertext,
+                    tag,
+                    ZChatIM::AUTH_TAG_SIZE)) {
+                errOut = "BuildZmk23File: EncryptMessage failed";
+                return false;
+            }
+            if (ciphertext.size() != ZChatIM::CRYPTO_KEY_SIZE) {
+                errOut = "BuildZmk23File: ciphertext size mismatch";
+                return false;
+            }
+            fileOut.reserve(8U + ZChatIM::NONCE_SIZE + ZChatIM::CRYPTO_KEY_SIZE + ZChatIM::AUTH_TAG_SIZE);
+            fileOut.insert(fileOut.end(), magic, magic + 4U);
+            const uint32_t le = kZmk23InnerPayloadBytes;
+            fileOut.push_back(static_cast<uint8_t>(le & 0xFFU));
+            fileOut.push_back(static_cast<uint8_t>((le >> 8U) & 0xFFU));
+            fileOut.push_back(static_cast<uint8_t>((le >> 16U) & 0xFFU));
+            fileOut.push_back(static_cast<uint8_t>((le >> 24U) & 0xFFU));
+            fileOut.insert(fileOut.end(), nonce.begin(), nonce.end());
+            fileOut.insert(fileOut.end(), ciphertext.begin(), ciphertext.end());
+            fileOut.insert(fileOut.end(), tag, tag + ZChatIM::AUTH_TAG_SIZE);
+            return true;
+        }
+
+        static bool ParseAndDecryptZmk23(
+            const std::vector<uint8_t>& raw,
+            const uint8_t               expectMagic[4],
+            const uint8_t               wrapKey[ZChatIM::CRYPTO_KEY_SIZE],
+            std::vector<uint8_t>&       outMaster32,
+            std::string&                errOut)
+        {
+            outMaster32.clear();
+            errOut.clear();
+            const size_t need = 8U + static_cast<size_t>(kZmk23InnerPayloadBytes);
+            if (raw.size() != need) {
+                errOut = "mm2_message_key.bin: ZMK2/3 file size mismatch";
+                return false;
+            }
+            if (std::memcmp(raw.data(), expectMagic, 4U) != 0) {
+                errOut = "mm2_message_key.bin: magic mismatch";
+                return false;
+            }
+            const uint32_t inner = static_cast<uint32_t>(raw[4]) | (static_cast<uint32_t>(raw[5]) << 8U)
+                | (static_cast<uint32_t>(raw[6]) << 16U) | (static_cast<uint32_t>(raw[7]) << 24U);
+            if (inner != kZmk23InnerPayloadBytes) {
+                errOut = "mm2_message_key.bin: inner payload length invalid";
+                return false;
+            }
+            const uint8_t* p     = raw.data() + 8U;
+            const uint8_t* nonce = p;
+            const uint8_t* ct    = p + ZChatIM::NONCE_SIZE;
+            const uint8_t* tg    = p + ZChatIM::NONCE_SIZE + ZChatIM::CRYPTO_KEY_SIZE;
+            if (!Crypto::DecryptMessage(
+                    ct,
+                    ZChatIM::CRYPTO_KEY_SIZE,
+                    wrapKey,
+                    ZChatIM::CRYPTO_KEY_SIZE,
+                    nonce,
+                    ZChatIM::NONCE_SIZE,
+                    tg,
+                    ZChatIM::AUTH_TAG_SIZE,
+                    outMaster32)) {
+                errOut = "mm2_message_key.bin: decrypt failed (wrong key, corrupt file, or wrong platform)";
+                return false;
+            }
+            if (outMaster32.size() != ZChatIM::CRYPTO_KEY_SIZE) {
+                errOut = "mm2_message_key.bin: decrypted length invalid";
+                outMaster32.clear();
+                return false;
+            }
+            return true;
+        }
+
+        static bool WriteMessageKeyFilePosix(
+            const std::filesystem::path& keyPath,
+            const std::string&           indexDirUtf8,
+            const uint8_t*               master32,
+            std::string&                 errOut)
+        {
+            errOut.clear();
+            std::vector<uint8_t> fileBlob;
+#if defined(__APPLE__)
+            std::vector<uint8_t> wrap;
+            if (!detail::Mm2DarwinGetOrCreateMessageWrapKey(indexDirUtf8, wrap, errOut)) {
+                return false;
+            }
+            if (wrap.size() != ZChatIM::CRYPTO_KEY_SIZE) {
+                errOut = "Keychain wrap key invalid size";
+                return false;
+            }
+            if (!BuildZmk23File(kMm2MessageKeyMagicZmk3, wrap.data(), master32, fileBlob, errOut)) {
+                return false;
+            }
+#else
+            uint8_t wrap[ZChatIM::CRYPTO_KEY_SIZE]{};
+            if (!DeriveUnixWrapKeyFromMachineAndPath(indexDirUtf8, wrap, errOut)) {
+                return false;
+            }
+            if (!BuildZmk23File(kMm2MessageKeyMagicZmk2, wrap, master32, fileBlob, errOut)) {
+                return false;
+            }
 #endif
+            std::ofstream out(keyPath, std::ios::binary | std::ios::trunc);
+            if (!out) {
+                errOut = "cannot open mm2_message_key.bin for write";
+                return false;
+            }
+            out.write(reinterpret_cast<const char*>(fileBlob.data()), static_cast<std::streamsize>(fileBlob.size()));
+            if (!out) {
+                errOut = "writing mm2_message_key.bin failed";
+                return false;
+            }
+            return true;
+        }
+
+        static bool ReadMessageKeyFilePosix(
+            const std::filesystem::path& keyPath,
+            const std::string&           indexDirUtf8,
+            std::vector<uint8_t>&        outKey,
+            std::string&                 errOut)
+        {
+            outKey.clear();
+            errOut.clear();
+            std::vector<uint8_t> raw;
+            if (!ReadAllBytesMessageKeyFilePosix(keyPath, raw, errOut)) {
+                return false;
+            }
+            if (raw.size() == ZChatIM::CRYPTO_KEY_SIZE) {
+                outKey = std::move(raw);
+                return true;
+            }
+            if (raw.size() >= 4U && std::memcmp(raw.data(), kMm2MessageKeyMagicZmk1, 4U) == 0) {
+                errOut = "mm2_message_key.bin: ZMK1 (Windows DPAPI) cannot be read on this platform";
+                return false;
+            }
+            if (raw.size() >= 4U && std::memcmp(raw.data(), kMm2MessageKeyMagicZmk3, 4U) == 0) {
+#if defined(__APPLE__)
+                std::vector<uint8_t> wrap;
+                if (!detail::Mm2DarwinGetOrCreateMessageWrapKey(indexDirUtf8, wrap, errOut)) {
+                    return false;
+                }
+                if (wrap.size() != ZChatIM::CRYPTO_KEY_SIZE) {
+                    errOut = "Keychain wrap key invalid size";
+                    return false;
+                }
+                return ParseAndDecryptZmk23(raw, kMm2MessageKeyMagicZmk3, wrap.data(), outKey, errOut);
+#else
+                errOut = "mm2_message_key.bin: ZMK3 requires macOS/iOS Keychain";
+                return false;
+#endif
+            }
+            if (raw.size() >= 4U && std::memcmp(raw.data(), kMm2MessageKeyMagicZmk2, 4U) == 0) {
+                uint8_t wrap[ZChatIM::CRYPTO_KEY_SIZE]{};
+                if (!DeriveUnixWrapKeyFromMachineAndPath(indexDirUtf8, wrap, errOut)) {
+                    return false;
+                }
+                return ParseAndDecryptZmk23(raw, kMm2MessageKeyMagicZmk2, wrap, outKey, errOut);
+            }
+            errOut = "mm2_message_key.bin: unknown format (expected 32-byte legacy or ZMK2/ZMK3)";
+            return false;
+        }
+#endif // !defined(_WIN32)
 
         std::vector<uint8_t> EncodeQueryMessageRow(const std::vector<uint8_t>& msgId, const std::vector<uint8_t>& payload)
         {
@@ -314,6 +598,66 @@ namespace ZChatIM::mm2 {
         m_metadataDbPath.clear();
     }
 
+    bool MM2::IsInitialized() const
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        return m_initialized;
+    }
+
+    bool MM2::StoreMm1UserDataBlob(
+        const std::vector<uint8_t>& userId,
+        int32_t                     type,
+        const std::vector<uint8_t>& data)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.UpsertMm1UserKvBlob(userId, type, data)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        m_lastError.clear();
+        return true;
+    }
+
+    bool MM2::GetMm1UserDataBlob(
+        const std::vector<uint8_t>& userId,
+        int32_t                     type,
+        std::vector<uint8_t>&       outData)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        outData.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.GetMm1UserKvBlob(userId, type, outData)) {
+            SetLastError(m_metadataDb.LastError());
+            outData.clear();
+            return false;
+        }
+        m_lastError.clear();
+        return true;
+    }
+
+    bool MM2::DeleteMm1UserDataBlob(const std::vector<uint8_t>& userId, int32_t type)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        const bool removed = m_metadataDb.DeleteMm1UserKvBlob(userId, type);
+        if (!removed && !m_metadataDb.LastError().empty()) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        m_lastError.clear();
+        return removed;
+    }
+
     bool MM2::Initialize(const std::string& dataDir, const std::string& indexDir)
     {
         std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
@@ -362,6 +706,47 @@ namespace ZChatIM::mm2 {
             m_metadataDbPath.clear();
             return false;
         }
+#if defined(ZCHATIM_USE_SQLCIPHER)
+        // 元数据 SQLCipher 密钥由消息主密钥域分离派生；须先 **`Crypto::Init`** + **`mm2_message_key.bin`**（与 **`03-Storage.md`** §4.2 一致）。
+        if (!Crypto::Init()) {
+            SetLastError("Crypto::Init failed (required for SQLCipher metadata key setup)");
+            m_zdbManager.Cleanup();
+            m_dataDir.clear();
+            m_indexDir.clear();
+            m_metadataDbPath.clear();
+            return false;
+        }
+        if (!LoadOrCreateMessageStorageKeyUnlocked()) {
+            if (LastError().empty()) {
+                SetLastError("message storage key setup failed (SQLCipher metadata)");
+            }
+            m_zdbManager.Cleanup();
+            m_dataDir.clear();
+            m_indexDir.clear();
+            m_metadataDbPath.clear();
+            return false;
+        }
+        std::vector<uint8_t> sqlcipherMetaKey;
+        if (!DeriveMetadataSqlcipherKeyFromMessageMaster(m_messageStorageKey, sqlcipherMetaKey)) {
+            SetLastError("DeriveMetadataSqlcipherKeyFromMessageMaster failed");
+            m_zdbManager.Cleanup();
+            m_dataDir.clear();
+            m_indexDir.clear();
+            m_metadataDbPath.clear();
+            return false;
+        }
+        if (!m_metadataDb.Open(m_metadataDbPath, sqlcipherMetaKey)) {
+            SetLastError(m_metadataDb.LastError());
+            SecureZeroBytes(sqlcipherMetaKey.data(), sqlcipherMetaKey.size());
+            m_zdbManager.Cleanup();
+            m_dataDir.clear();
+            m_indexDir.clear();
+            m_metadataDbPath.clear();
+            return false;
+        }
+        SecureZeroBytes(sqlcipherMetaKey.data(), sqlcipherMetaKey.size());
+        sqlcipherMetaKey.clear();
+#else
         if (!m_metadataDb.Open(m_metadataDbPath)) {
             SetLastError(m_metadataDb.LastError());
             m_zdbManager.Cleanup();
@@ -370,6 +755,7 @@ namespace ZChatIM::mm2 {
             m_metadataDbPath.clear();
             return false;
         }
+#endif
         if (!m_metadataDb.InitializeSchema()) {
             SetLastError(m_metadataDb.LastError());
             m_metadataDb.Close();
@@ -569,22 +955,22 @@ namespace ZChatIM::mm2 {
             }
             return true;
 #else
-            std::ifstream in(keyPath, std::ios::binary);
-            if (!in) {
-                SetLastError("LoadOrCreateMessageStorageKey: cannot open mm2_message_key.bin for read");
-                return false;
-            }
-            std::vector<uint8_t> key(ZChatIM::CRYPTO_KEY_SIZE);
-            in.read(reinterpret_cast<char*>(key.data()), static_cast<std::streamsize>(key.size()));
-            if (in.gcount() != static_cast<std::streamsize>(ZChatIM::CRYPTO_KEY_SIZE)) {
-                SetLastError("LoadOrCreateMessageStorageKey: key file is not exactly 32 bytes");
-                return false;
-            }
-            if (in.peek() != std::ifstream::traits_type::eof()) {
-                SetLastError("LoadOrCreateMessageStorageKey: key file has trailing bytes");
+            const std::string indexDirUtf8 =
+                std::filesystem::path(m_indexDir).lexically_normal().generic_string();
+            std::vector<uint8_t> key;
+            std::string          readErr;
+            if (!ReadMessageKeyFilePosix(keyPath, indexDirUtf8, key, readErr)) {
+                SetLastError(std::string("LoadOrCreateMessageStorageKey: ") + readErr);
                 return false;
             }
             m_messageStorageKey = std::move(key);
+            // 旧版 32 字节明文 → 尽力改写为 **ZMK2**（Linux 等）或 **ZMK3**（Apple Keychain）。
+            std::error_code      ecFsz;
+            const std::uintmax_t fszBefore = fs::file_size(keyPath, ecFsz);
+            if (!ecFsz && fszBefore == ZChatIM::CRYPTO_KEY_SIZE) {
+                std::string migErr;
+                (void)WriteMessageKeyFilePosix(keyPath, indexDirUtf8, m_messageStorageKey.data(), migErr);
+            }
             return true;
 #endif
         }
@@ -600,14 +986,11 @@ namespace ZChatIM::mm2 {
             return false;
         }
 #else
-        std::ofstream out(keyPath, std::ios::binary | std::ios::trunc);
-        if (!out) {
-            SetLastError("LoadOrCreateMessageStorageKey: cannot open mm2_message_key.bin for write");
-            return false;
-        }
-        out.write(reinterpret_cast<const char*>(key.data()), static_cast<std::streamsize>(key.size()));
-        if (!out) {
-            SetLastError("LoadOrCreateMessageStorageKey: writing mm2_message_key.bin failed");
+        const std::string indexDirUtf8 =
+            std::filesystem::path(m_indexDir).lexically_normal().generic_string();
+        std::string       writeErr;
+        if (!WriteMessageKeyFilePosix(keyPath, indexDirUtf8, key.data(), writeErr)) {
+            SetLastError(std::string("LoadOrCreateMessageStorageKey: ") + writeErr);
             return false;
         }
 #endif
@@ -673,6 +1056,60 @@ namespace ZChatIM::mm2 {
         }
         if (!m_metadataDb.UpsertZdbFile(zdbFileId, ZChatIM::ZDB_FILE_SIZE, static_cast<uint64_t>(used))) {
             SetLastError(std::string("revert: UpsertZdbFile: ") + m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::WriteGroupKeyEnvelopeUnlocked(const std::vector<uint8_t>& groupId, uint64_t epochSeconds)
+    {
+        if (groupId.size() != ZChatIM::USER_ID_SIZE) {
+            SetLastError("WriteGroupKeyEnvelope: invalid groupId size");
+            return false;
+        }
+        std::vector<uint8_t> key = Crypto::GenerateSecureRandom(ZChatIM::CRYPTO_KEY_SIZE);
+        if (key.size() != ZChatIM::CRYPTO_KEY_SIZE) {
+            SetLastError("WriteGroupKeyEnvelope: GenerateSecureRandom failed");
+            return false;
+        }
+        std::vector<uint8_t> blob;
+        blob.reserve(4U + 8U + ZChatIM::CRYPTO_KEY_SIZE);
+        blob.push_back(static_cast<uint8_t>('Z'));
+        blob.push_back(static_cast<uint8_t>('G'));
+        blob.push_back(static_cast<uint8_t>('K'));
+        blob.push_back(static_cast<uint8_t>('1'));
+        uint64_t e = epochSeconds;
+        for (int shift = 56; shift >= 0; shift -= 8) {
+            blob.push_back(static_cast<uint8_t>((e >> shift) & 0xFFULL));
+        }
+        blob.insert(blob.end(), key.begin(), key.end());
+        SecureZeroBytes(key.data(), key.size());
+
+        if (!PutDataBlockBlobUnlocked(groupId, 0, blob)) {
+            return false;
+        }
+        std::string zf;
+        uint64_t    off = 0;
+        uint64_t    len = 0;
+        uint8_t     sh[ZChatIM::SHA256_SIZE]{};
+        if (!m_metadataDb.GetDataBlock(groupId, 0, zf, off, len, sh)) {
+            const std::string errSave = m_metadataDb.LastError();
+            // Put 已成功：`data_blocks` 与 `.zdb` 区间可能已提交；尽力回滚，减少孤儿块。
+            if (m_metadataDb.DataBlockExists(groupId, 0)) {
+                std::string zfR;
+                uint64_t    offR = 0;
+                uint64_t    lenR = 0;
+                uint8_t     shR[ZChatIM::SHA256_SIZE]{};
+                if (m_metadataDb.GetDataBlock(groupId, 0, zfR, offR, lenR, shR)) {
+                    (void)RevertFailedPutDataBlockUnlocked(groupId, 0, zfR, offR, blob.size());
+                }
+            }
+            SetLastError(errSave.empty() ? "WriteGroupKeyEnvelope: GetDataBlock after Put failed" : errSave);
+            return false;
+        }
+        if (!m_metadataDb.UpsertGroupData(groupId, zf, off, len, sh)) {
+            SetLastError(m_metadataDb.LastError());
+            (void)RevertFailedPutDataBlockUnlocked(groupId, 0, zf, off, blob.size());
             return false;
         }
         return true;
@@ -1181,6 +1618,14 @@ namespace ZChatIM::mm2 {
         if (!keyp.empty()) {
             std::filesystem::remove(keyp, ec);
         }
+#if defined(__APPLE__)
+        if (!m_indexDir.empty()) {
+            const std::string idxUtf8 =
+                std::filesystem::path(m_indexDir).lexically_normal().generic_string();
+            std::string       kcerr;
+            (void)detail::Mm2DarwinDeleteMessageWrapKey(idxUtf8, kcerr);
+        }
+#endif
         m_dataDir.clear();
         m_indexDir.clear();
         m_metadataDbPath.clear();
@@ -1733,6 +2178,274 @@ namespace ZChatIM::mm2 {
         return true;
     }
 
+    bool MM2::GetFriendRequestRowForMm1(
+        const std::vector<uint8_t>& requestId,
+        std::vector<uint8_t>&       outFromUser,
+        std::vector<uint8_t>&       outToUser,
+        int32_t&                    outStatus)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.GetFriendRequestRow(requestId, outFromUser, outToUser, outStatus)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::ListAcceptedFriendUserIdsForMm1(
+        const std::vector<uint8_t>& userId,
+        std::vector<std::vector<uint8_t>>& outFriends)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.ListAcceptedFriendPeerUserIds(userId, outFriends)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::DeleteAcceptedFriendshipBetweenForMm1(
+        const std::vector<uint8_t>& userId,
+        const std::vector<uint8_t>& friendId)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.DeleteAcceptedFriendshipEdgesBetween(userId, friendId)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::CreateGroupSeedForMm1(
+        const std::vector<uint8_t>& groupId,
+        const std::vector<uint8_t>& creatorId,
+        const std::string&          nameUtf8,
+        uint64_t                    nowSeconds)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (groupId.size() != ZChatIM::USER_ID_SIZE || creatorId.size() != ZChatIM::USER_ID_SIZE) {
+            SetLastError("CreateGroupSeedForMm1: invalid id size");
+            return false;
+        }
+        if (nameUtf8.empty()) {
+            SetLastError("CreateGroupSeedForMm1: empty name");
+            return false;
+        }
+        constexpr int32_t kOwnerRole = 2;
+        if (!m_metadataDb.UpsertGroupMember(
+                groupId, creatorId, kOwnerRole, static_cast<int64_t>(nowSeconds))) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        if (!m_metadataDb.UpsertGroupDisplayName(groupId, nameUtf8, nowSeconds, creatorId)) {
+            SetLastError(m_metadataDb.LastError());
+            (void)m_metadataDb.DeleteGroupMember(groupId, creatorId);
+            return false;
+        }
+        if (!WriteGroupKeyEnvelopeUnlocked(groupId, nowSeconds)) {
+            if (m_lastError.empty()) {
+                SetLastError("CreateGroupSeedForMm1: WriteGroupKeyEnvelope failed");
+            }
+            (void)m_metadataDb.DeleteGroupMember(groupId, creatorId);
+            (void)m_metadataDb.DeleteGroupDisplayName(groupId);
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::UpsertGroupMemberForMm1(
+        const std::vector<uint8_t>& groupId,
+        const std::vector<uint8_t>& userId,
+        int32_t                     role,
+        int64_t                     joinedAtSeconds)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.UpsertGroupMember(groupId, userId, role, joinedAtSeconds)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::DeleteGroupMemberForMm1(const std::vector<uint8_t>& groupId, const std::vector<uint8_t>& userId)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.DeleteGroupMember(groupId, userId)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::ListGroupMemberUserIdsForMm1(
+        const std::vector<uint8_t>& groupId,
+        std::vector<std::vector<uint8_t>>& outUserIds)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        outUserIds.clear();
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.ListGroupMemberUserIds(groupId, outUserIds)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::GetGroupMemberRoleForMm1(
+        const std::vector<uint8_t>& groupId,
+        const std::vector<uint8_t>& userId,
+        int32_t&                    outRole,
+        int64_t&                    outJoinedAt)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.GetGroupMember(groupId, userId, outRole, outJoinedAt)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::GetGroupMemberExistsForMm1(
+        const std::vector<uint8_t>& groupId,
+        const std::vector<uint8_t>& userId,
+        bool&                       outExists)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.GetGroupMemberRowExists(groupId, userId, outExists)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::UpsertGroupKeyEnvelopeForMm1(const std::vector<uint8_t>& groupId, uint64_t epochSeconds)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (groupId.size() != ZChatIM::USER_ID_SIZE) {
+            SetLastError("UpsertGroupKeyEnvelopeForMm1: invalid groupId size");
+            return false;
+        }
+        return WriteGroupKeyEnvelopeUnlocked(groupId, epochSeconds);
+    }
+
+    bool MM2::TryGetGroupKeyEnvelopeForMm1(const std::vector<uint8_t>& groupId, std::vector<uint8_t>& outEnvelope)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        outEnvelope.clear();
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (groupId.size() != ZChatIM::USER_ID_SIZE) {
+            SetLastError("TryGetGroupKeyEnvelopeForMm1: invalid groupId size");
+            return false;
+        }
+        std::string zf;
+        uint64_t    off = 0;
+        uint64_t    len = 0;
+        uint8_t     sh[ZChatIM::SHA256_SIZE]{};
+        if (!m_metadataDb.GetGroupData(groupId, zf, off, len, sh)) {
+            return false;
+        }
+        if (!GetDataBlockBlobUnlocked(groupId, 0, outEnvelope)) {
+            return false;
+        }
+        constexpr size_t kZgk1Size = 4U + 8U + ZChatIM::CRYPTO_KEY_SIZE;
+        if (outEnvelope.size() != kZgk1Size || outEnvelope[0] != 'Z' || outEnvelope[1] != 'G' || outEnvelope[2] != 'K'
+            || outEnvelope[3] != '1') {
+            outEnvelope.clear();
+            SetLastError("TryGetGroupKeyEnvelopeForMm1: invalid ZGK1 envelope");
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::SeedAcceptedFriendshipForSelfTest(
+        const std::vector<uint8_t>& fromUserId,
+        const std::vector<uint8_t>& toUserId,
+        uint64_t                    nowSeconds)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (fromUserId.size() != ZChatIM::USER_ID_SIZE || toUserId.size() != ZChatIM::USER_ID_SIZE) {
+            SetLastError("SeedAcceptedFriendshipForSelfTest: invalid user id size");
+            return false;
+        }
+        if (fromUserId == toUserId) {
+            SetLastError("SeedAcceptedFriendshipForSelfTest: from and to must differ");
+            return false;
+        }
+        std::vector<uint8_t> rid = Crypto::GenerateSecureRandom(ZChatIM::MESSAGE_ID_SIZE);
+        if (rid.size() != ZChatIM::MESSAGE_ID_SIZE) {
+            SetLastError("SeedAcceptedFriendshipForSelfTest: request id random failed");
+            return false;
+        }
+        std::vector<uint8_t> sig(64, 0);
+        if (!m_metadataDb.InsertFriendRequest(rid, fromUserId, toUserId, nowSeconds, sig)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        if (!m_metadataDb.UpdateFriendRequestStatus(rid, 1, toUserId, nowSeconds)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
     bool MM2::UpdateGroupName(
         const std::vector<uint8_t>& groupId,
         const std::string&          newGroupName,
@@ -1762,6 +2475,79 @@ namespace ZChatIM::mm2 {
             return false;
         }
         if (!m_metadataDb.GetGroupDisplayName(groupId, outGroupName)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::UpsertGroupMuteForMm1(
+        const std::vector<uint8_t>& groupId,
+        const std::vector<uint8_t>& userId,
+        int64_t                     startMs,
+        int64_t                     durationSeconds,
+        const std::vector<uint8_t>& mutedBy,
+        const std::vector<uint8_t>& reason)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.UpsertGroupMute(groupId, userId, startMs, durationSeconds, mutedBy, reason)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::DeleteGroupMuteForMm1(const std::vector<uint8_t>& groupId, const std::vector<uint8_t>& userId)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.DeleteGroupMute(groupId, userId)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::GetGroupMuteRowForMm1(
+        const std::vector<uint8_t>& groupId,
+        const std::vector<uint8_t>& userId,
+        bool&                       outExists,
+        int64_t&                    outStartMs,
+        int64_t&                    outDurationS,
+        std::vector<uint8_t>&       outMutedBy,
+        std::vector<uint8_t>&       outReason)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.GetGroupMuteRow(groupId, userId, outExists, outStartMs, outDurationS, outMutedBy, outReason)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::DeleteExpiredGroupMutesForMm1(int64_t nowMs)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.DeleteExpiredGroupMutes(nowMs)) {
             SetLastError(m_metadataDb.LastError());
             return false;
         }
@@ -1846,6 +2632,12 @@ namespace ZChatIM::mm2 {
         constexpr uint64_t kTtlSec = 30ULL * 86400ULL;
         const uint64_t     nowSec = nowMs / 1000ULL;
         if (!m_metadataDb.DeleteExpiredPendingFriendRequests(nowSec, kTtlSec)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        const int64_t nowMsI64 =
+            static_cast<int64_t>(nowMs > static_cast<uint64_t>(INT64_MAX) ? INT64_MAX : static_cast<int64_t>(nowMs));
+        if (!m_metadataDb.DeleteExpiredGroupMutes(nowMsI64)) {
             SetLastError(m_metadataDb.LastError());
             return false;
         }

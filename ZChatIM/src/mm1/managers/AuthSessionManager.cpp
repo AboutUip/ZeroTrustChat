@@ -1,5 +1,6 @@
 #include "mm1/managers/AuthSessionManager.h"
 #include "Types.h"
+#include "common/OpenSsl3Required.h"
 
 #include <array>
 #include <ctime>
@@ -11,20 +12,12 @@
 #include <mutex>
 #include <vector>
 
-#if defined(_WIN32)
-#    ifndef WIN32_LEAN_AND_MEAN
-#        define WIN32_LEAN_AND_MEAN
-#    endif
-#    ifndef NOMINMAX
-#        define NOMINMAX
-#    endif
-#    include <windows.h>
-#    include <bcrypt.h>
-#else
+#include <openssl/rand.h>
+
+#if !defined(_WIN32)
 #    include <cerrno>
 #    include <fcntl.h>
 #    include <unistd.h>
-#    include <openssl/rand.h>
 #endif
 
 namespace ZChatIM::mm1 {
@@ -145,17 +138,6 @@ namespace ZChatIM::mm1 {
             if (out == nullptr || len == 0) {
                 return false;
             }
-#if defined(_WIN32)
-            if (len > static_cast<size_t>(std::numeric_limits<ULONG>::max())) {
-                return false;
-            }
-            const NTSTATUS st = BCryptGenRandom(
-                nullptr,
-                out,
-                static_cast<ULONG>(len),
-                BCRYPT_USE_SYSTEM_PREFERRED_RNG);
-            return st == 0;
-#else
             if (len > static_cast<size_t>(std::numeric_limits<int>::max())) {
                 return false;
             }
@@ -167,6 +149,9 @@ namespace ZChatIM::mm1 {
             if (RAND_bytes(out, n) == 1) {
                 return true;
             }
+#if defined(_WIN32)
+            return false;
+#else
             const int fd = open("/dev/urandom", O_RDONLY);
             if (fd < 0) {
                 return false;
@@ -368,6 +353,33 @@ namespace ZChatIM::mm1 {
             SecureZeroSessionEntry(dead);
             return false;
         }
+        return true;
+    }
+
+    bool AuthSessionManager::TryGetSessionUserId(
+        const std::vector<uint8_t>& sessionId,
+        std::vector<uint8_t>&       outUserId)
+    {
+        outUserId.clear();
+        if (!impl_) {
+            return false;
+        }
+        if (sessionId.size() != kSessionIdBytes) {
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        const auto                 it = impl_->sessions.find(sessionId);
+        if (it == impl_->sessions.end()) {
+            return false;
+        }
+        if (std::chrono::steady_clock::now() >= it->second.expiresAt) {
+            SessionEntry dead = std::move(it->second);
+            impl_->sessions.erase(it);
+            SecureZeroSessionEntry(dead);
+            return false;
+        }
+        outUserId.assign(it->second.userId.begin(), it->second.userId.end());
         return true;
     }
 

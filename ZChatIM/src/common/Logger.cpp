@@ -157,6 +157,9 @@ namespace ZChatIM {
             std::fclose(m_logFile);
             m_logFile = nullptr;
         }
+        if (filePath.empty()) {
+            return false;
+        }
         m_logFile = std::fopen(filePath.c_str(), "a");
         return m_logFile != nullptr;
     }

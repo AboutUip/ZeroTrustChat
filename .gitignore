@@ -2,19 +2,18 @@
 .idea/
 .vscode/
 .vs/
+.gradle/
+Client/Android/app/src/test/
+Client/Android/app/src/androidTest/
 
 # 数据文件
 *.zdb
-# ZChatIM --test / --test-minimal 持久输出（./data，cwd 为 ZChatIM 目录时）
+# ZChatIM --test 持久输出（./data，cwd 为 ZChatIM 目录时）
 .mvn/
 # ZChatIM/docs：忽略本地生成物；以下契约文档须保持可跟踪
 ZChatIM/docs/*
 !ZChatIM/docs/JNI-API-Documentation.md
 !ZChatIM/docs/BUILD-WINDOWS.md
-
-# 客户端发布物目录：默认只提交 README；安装包用 CI/Release 分发（须入库时用 git add -f）
-Client/*
-!Client/README.md
 
 # ZChatIM 树内 C++ 测试源码不入库（提交/默认 CMake 不编测试）；本地自测请自备 tests/ 并 -DZCHATIM_BUILD_TESTS=ON
 ZChatServer/src/test/
@@ -30,8 +29,3 @@ build/
 build-*/
 cmake-build-*/
 target/
-
-# ZChatIM：用户本机下载的 OpenSSL 多版本（thirdparty/openssl/versions 下除说明文件外不入库）
-ZChatIM/thirdparty/openssl/versions/*
-!ZChatIM/thirdparty/openssl/versions/README.md
-!ZChatIM/thirdparty/openssl/versions/.gitkeep

@@ -1,11 +1,19 @@
-// ZChatIM JNI 动态库入口桩 — 随实现扩展 native 方法导出。
-// 构建：见 ZChatIM/CMakeLists.txt（ZCHATIM_BUILD_JNI）。
+// ZChatIM JNI 动态库入口：`RegisterNatives` 绑定 `com.yhj.zchat.jni.ZChatIMNative` → `JniInterface` / `JniBridge`。
+// 构建：ZChatIM/CMakeLists.txt（ZCHATIM_BUILD_JNI、JAVA_HOME / JNI 头路径）。
 
 #include <jni.h>
 
-JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* /*vm*/, void* /*reserved*/)
+extern "C" jint zchatim_RegisterNatives(JNIEnv* env);
+
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/)
 {
-    // 后续：注册 native 方法、校验 JniBridge/JniInterface 初始化等
+    JNIEnv* env = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_8) != JNI_OK) {
+        return JNI_ERR;
+    }
+    if (zchatim_RegisterNatives(env) != JNI_OK) {
+        return JNI_ERR;
+    }
     return JNI_VERSION_1_8;
 }
 

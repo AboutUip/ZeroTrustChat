@@ -3,7 +3,7 @@
 > **文档类型**：**ZSP 载荷 TLV** + **MM1 权限校验**。  
 > **编号注意**：**TLV Type `0x15`（Mention）** 与 ZSP **消息类型**表中的 **`0x15` = GROUP_REMOVE** 是**不同命名空间**（见 **`02-ZSP-Protocol.md` 第7.2节 文首说明**）。本文 **0x15** 均指 **TLV 扩展**。  
 > **JNI**：**`ValidateMentionRequest`**、**`RecordMentionAtAllUsage`**（**`01-JNI.md`** 第六节）。  
-> **实现状态**：**`05-ZChatIM-Implementation-Status.md` 第3节** — MM1 **`MentionPermissionManager`** 等 **无完整 `.cpp` / 桥未接**；**禁止**在 JniBridge 绕过签名校验直调 Record。
+> **实现状态**：**`05-ZChatIM-Implementation-Status.md` 第3节** — **`MentionPermissionManager`** 为桩；**JNI** **`validateMentionRequest` / `recordMentionAtAllUsage`** 已接 **`JniBridge`**。**禁止**在其它路径绕过签名校验直调 MM2。
 
 ---
 

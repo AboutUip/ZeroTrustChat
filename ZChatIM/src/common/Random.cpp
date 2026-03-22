@@ -1,4 +1,5 @@
 #include "common/Random.h"
+#include "common/OpenSsl3Required.h"
 
 #include <algorithm>
 #include <atomic>
@@ -8,16 +9,20 @@
 #include <mutex>
 #include <random>
 
-#if defined(_WIN32)
-#    ifndef NOMINMAX
-#        define NOMINMAX
-#    endif
-#    include <windows.h>
-#    include <bcrypt.h>
-#else
+#include <openssl/rand.h>
+
+#if !defined(_WIN32)
 #    include <fcntl.h>
 #    include <unistd.h>
 #endif
+
+namespace {
+
+    // 防御异常 length 导致 vector/string 分配失控或 OOM（与 MM2 业务上限无关）。
+    constexpr size_t kMaxRandomByteBlob    = 64ULL * 1024ULL * 1024ULL;
+    constexpr size_t kMaxRandomStringChars = 16ULL * 1024ULL * 1024ULL;
+
+} // namespace
 
 namespace ZChatIM::common {
 
@@ -57,11 +62,20 @@ namespace ZChatIM::common {
 
     static bool ReadOsRandom(void* dst, size_t len)
     {
-#if defined(_WIN32)
-        if (len > static_cast<size_t>((std::numeric_limits<unsigned long>::max)()))
+        if (len > static_cast<size_t>((std::numeric_limits<int>::max)())) {
             return false;
-        const NTSTATUS st = BCryptGenRandom(nullptr, static_cast<PUCHAR>(dst), static_cast<ULONG>(len), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
-        return st == 0;
+        }
+        auto* p = static_cast<uint8_t*>(dst);
+        const int n = static_cast<int>(len);
+        if (RAND_bytes(p, n) == 1) {
+            return true;
+        }
+        RAND_poll();
+        if (RAND_bytes(p, n) == 1) {
+            return true;
+        }
+#if defined(_WIN32)
+        return false;
 #else
         std::lock_guard<std::mutex> lock(g_urandomMutex);
         if (g_urandomFd < 0) {
@@ -69,7 +83,6 @@ namespace ZChatIM::common {
             if (g_urandomFd < 0)
                 return false;
         }
-        auto* p = static_cast<uint8_t*>(dst);
         size_t off = 0;
         while (off < len) {
             const ssize_t n = ::read(g_urandomFd, p + off, len - off);
@@ -103,18 +116,17 @@ namespace ZChatIM::common {
         return true;
     }
 
-    static void FillStringUniformAlpha62(std::string& s)
+    // 仅 **OpenSSL RAND**（+ Unix `/dev/urandom`）；失败则返回 false，**不**用 mt19937 冒充 CSPRNG。
+    static bool FillStringUniformAlpha62(std::string& s)
     {
         for (size_t i = 0; i < s.size(); ++i) {
             uint64_t idx = 0;
             if (!ReadUniformIndex(kAlpha62Count, &idx)) {
-                EnsureInit();
-                std::uniform_int_distribution<size_t> dist(0, kAlpha62Count - 1);
-                std::lock_guard<std::mutex> lock(g_rngMutex);
-                idx = dist(g_mt);
+                return false;
             }
             s[i] = kAlpha62[idx];
         }
+        return true;
     }
 
     std::vector<uint8_t> Random::GenerateBytes(size_t length)
@@ -155,10 +167,11 @@ namespace ZChatIM::common {
 
     std::vector<uint8_t> Random::GenerateSecureBytes(size_t length)
     {
+        if (length > kMaxRandomByteBlob)
+            return {};
         std::vector<uint8_t> out(length);
         if (!ReadOsRandom(out.data(), length)) {
-            EnsureInit();
-            out = GenerateBytes(length);
+            return {};
         }
         return out;
     }
@@ -172,8 +185,10 @@ namespace ZChatIM::common {
             return min;
         const uint64_t range = static_cast<uint64_t>(span);
         uint64_t idx = 0;
-        if (!ReadUniformIndex(range, &idx))
-            return GenerateInt(min, max);
+        if (!ReadUniformIndex(range, &idx)) {
+            // RAND 不可用：不再回退 mt19937，避免误用「伪安全」整数。
+            return min;
+        }
         return static_cast<int32_t>(static_cast<int64_t>(min) + static_cast<int64_t>(idx));
     }
 
@@ -185,8 +200,9 @@ namespace ZChatIM::common {
         if (range == 0)
             return min;
         uint64_t idx = 0;
-        if (!ReadUniformIndex(range, &idx))
-            return GenerateUInt(min, max);
+        if (!ReadUniformIndex(range, &idx)) {
+            return min;
+        }
         return min + static_cast<uint32_t>(idx);
     }
 
@@ -203,14 +219,20 @@ namespace ZChatIM::common {
     std::string Random::GenerateFileId()
     {
         std::string s(8, '\0');
-        FillStringUniformAlpha62(s);
+        if (!FillStringUniformAlpha62(s)) {
+            return {};
+        }
         return s;
     }
 
     std::string Random::GenerateRandomString(size_t length)
     {
+        if (length > kMaxRandomStringChars)
+            return {};
         std::string s(length, '\0');
-        FillStringUniformAlpha62(s);
+        if (!FillStringUniformAlpha62(s)) {
+            return {};
+        }
         return s;
     }
 

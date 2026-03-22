@@ -1,16 +1,27 @@
 // Metadata index SQLite binding (see docs/02-Core/03-Storage.md).
-// Production note: 03-Storage 第4.2节 mentions SQLCipher; this build uses vanilla SQLite until key management is wired.
+// **`ZCHATIM_USE_SQLCIPHER`**：SQLCipher + 域分离派生密钥 + 明文库一次性迁移（见 **`03-Storage.md`** §4.2）。
 
 #include "mm2/storage/SqliteMetadataDb.h"
 #include "Types.h"
 
+#if defined(ZCHATIM_USE_SQLCIPHER)
+#    include "mm2/storage/Crypto.h"
+#endif
+
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <chrono>
 #include <climits>
 #include <cstring>
+#include <fstream>
+#include <set>
 #include <string>
 #include <utility>
+
+#if defined(ZCHATIM_USE_SQLCIPHER)
+#    include <filesystem>
+#endif
 
 #ifdef _WIN32
 #    ifndef NOMINMAX
@@ -50,8 +61,260 @@ namespace ZChatIM::mm2 {
         }
 #endif
 
+#if defined(ZCHATIM_USE_SQLCIPHER)
+        // SQLCipher 4「严格」缺省对齐：页 4096、PBKDF2-HMAC-SHA512、256000 次、HMAC-SHA512（与跨平台一致性绑定，勿随意改动）。
+        static const char kSqlcipherStrictPragmasMain[] =
+            "PRAGMA cipher_page_size=4096;"
+            "PRAGMA kdf_iter=256000;"
+            "PRAGMA cipher_hmac_algorithm=HMAC_SHA512;"
+            "PRAGMA cipher_kdf_algorithm=PBKDF2_HMAC_SHA512;";
 
-        constexpr int kSchemaUserVersion = 4;
+        static const char kSqlcipherStrictPragmasEnc[] =
+            "PRAGMA zchatim_enc.cipher_page_size=4096;"
+            "PRAGMA zchatim_enc.kdf_iter=256000;"
+            "PRAGMA zchatim_enc.cipher_hmac_algorithm=HMAC_SHA512;"
+            "PRAGMA zchatim_enc.cipher_kdf_algorithm=PBKDF2_HMAC_SHA512;";
+
+        static void NormalizeUtf8PathSlashes(std::string& p)
+        {
+            for (char& c : p) {
+                if (c == '\\') {
+                    c = '/';
+                }
+            }
+        }
+
+        static std::string SqlSingleQuotedPathForAttach(const std::string& utf8Path)
+        {
+            std::string s;
+            s.push_back('\'');
+            for (char c : utf8Path) {
+                if (c == '\'') {
+                    s += "''";
+                } else if (c == '\\') {
+                    s += '/';
+                } else {
+                    s += c;
+                }
+            }
+            s.push_back('\'');
+            return s;
+        }
+
+        static std::string SqlHexRawKeyLiteral(const std::vector<uint8_t>& key32)
+        {
+            static const char* const kHd = "0123456789abcdef";
+            std::string          s;
+            s.reserve(2U + key32.size() * 2U + 1U);
+            s += "x'";
+            for (uint8_t b : key32) {
+                s += kHd[b >> 4U];
+                s += kHd[b & 15U];
+            }
+            s += '\'';
+            return s;
+        }
+
+        static bool ProbeSqliteMasterReadable(sqlite3* db, std::string& errOut)
+        {
+            sqlite3_stmt* st = nullptr;
+            if (sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM sqlite_master;", -1, &st, nullptr) != SQLITE_OK) {
+                errOut = sqlite3_errmsg(db);
+                return false;
+            }
+            const int step = sqlite3_step(st);
+            sqlite3_finalize(st);
+            if (step != SQLITE_ROW) {
+                errOut = "sqlite_master probe did not return a row";
+                return false;
+            }
+            return true;
+        }
+
+        static bool ApplySqlcipherStrictPragmas(sqlite3* db, std::string& errOut)
+        {
+            char* errMsg = nullptr;
+            const int rc = sqlite3_exec(db, kSqlcipherStrictPragmasMain, nullptr, nullptr, &errMsg);
+            if (rc != SQLITE_OK) {
+                errOut = errMsg ? errMsg : sqlite3_errmsg(db);
+                sqlite3_free(errMsg);
+                return false;
+            }
+            sqlite3_free(errMsg);
+            return true;
+        }
+
+        static bool FileHeaderIsPlainSqlite(const std::filesystem::path& pathFs, bool& outPlain, std::string& errOut)
+        {
+            outPlain = false;
+            std::error_code ec;
+            if (!std::filesystem::exists(pathFs, ec) || ec) {
+                return true;
+            }
+            const auto sz = std::filesystem::file_size(pathFs, ec);
+            if (ec || sz < 16) {
+                return true;
+            }
+            std::ifstream in(pathFs, std::ios::binary);
+            if (!in) {
+                errOut = "cannot open metadata db for plaintext header probe";
+                return false;
+            }
+            char magic[16]{};
+            in.read(magic, 16);
+            if (!in || in.gcount() != 16) {
+                errOut = "short read while probing sqlite header";
+                return false;
+            }
+            static const char kExpected[] = "SQLite format 3\0";
+            outPlain = (std::memcmp(magic, kExpected, 16) == 0);
+            return true;
+        }
+
+        // 主连接 = 明文库；ATTACH 目标 = 新 SQLCipher 文件；**`sqlcipher_export`** 后替换原文件。
+        static bool MigratePlainFileToSqlcipher(
+            const std::filesystem::path& dbPathFs,
+            const std::string&           dbUtf8,
+            const std::vector<uint8_t>&  key32,
+            std::string&                 errOut)
+        {
+            std::filesystem::path tmpFs = dbPathFs;
+            tmpFs += ".zchatim_sqlcipher_migrate.tmp";
+
+            std::error_code ecRm;
+            std::filesystem::remove(tmpFs, ecRm);
+
+            std::string tmpUtf8;
+#    ifdef _WIN32
+            if (!WidePathToUtf8(tmpFs.native(), tmpUtf8, errOut)) {
+                return false;
+            }
+#    else
+            tmpUtf8 = tmpFs.u8string();
+#    endif
+            NormalizeUtf8PathSlashes(tmpUtf8);
+
+            std::string mainUtf8 = dbUtf8;
+            NormalizeUtf8PathSlashes(mainUtf8);
+
+            sqlite3* plainDb = nullptr;
+            if (sqlite3_open_v2(mainUtf8.c_str(), &plainDb, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+                errOut = plainDb ? sqlite3_errmsg(plainDb) : "sqlite3_open_v2(plaintext metadata) failed";
+                if (plainDb != nullptr) {
+                    sqlite3_close(plainDb);
+                }
+                return false;
+            }
+
+            const std::string attachSql = std::string("ATTACH DATABASE ")
+                + SqlSingleQuotedPathForAttach(tmpUtf8) + " AS zchatim_enc KEY " + SqlHexRawKeyLiteral(key32) + ";";
+
+            char* errMsg = nullptr;
+            if (sqlite3_exec(plainDb, attachSql.c_str(), nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                errOut = errMsg ? errMsg : sqlite3_errmsg(plainDb);
+                sqlite3_free(errMsg);
+                sqlite3_close(plainDb);
+                std::filesystem::remove(tmpFs, ecRm);
+                return false;
+            }
+            sqlite3_free(errMsg);
+
+            if (sqlite3_exec(plainDb, kSqlcipherStrictPragmasEnc, nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                errOut = errMsg ? errMsg : sqlite3_errmsg(plainDb);
+                sqlite3_free(errMsg);
+                sqlite3_close(plainDb);
+                std::filesystem::remove(tmpFs, ecRm);
+                return false;
+            }
+            sqlite3_free(errMsg);
+
+            if (sqlite3_exec(plainDb, "SELECT sqlcipher_export('zchatim_enc');", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                errOut = errMsg ? errMsg : sqlite3_errmsg(plainDb);
+                sqlite3_free(errMsg);
+                sqlite3_close(plainDb);
+                std::filesystem::remove(tmpFs, ecRm);
+                return false;
+            }
+            sqlite3_free(errMsg);
+
+            if (sqlite3_exec(plainDb, "DETACH DATABASE zchatim_enc;", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+                errOut = errMsg ? errMsg : sqlite3_errmsg(plainDb);
+                sqlite3_free(errMsg);
+                sqlite3_close(plainDb);
+                std::filesystem::remove(tmpFs, ecRm);
+                return false;
+            }
+            sqlite3_free(errMsg);
+            sqlite3_close(plainDb);
+            plainDb = nullptr;
+
+            sqlite3* encDb = nullptr;
+            if (sqlite3_open_v2(tmpUtf8.c_str(), &encDb, SQLITE_OPEN_READWRITE, nullptr) != SQLITE_OK) {
+                errOut = encDb ? sqlite3_errmsg(encDb) : "sqlite3_open_v2(encrypted temp metadata) failed";
+                if (encDb != nullptr) {
+                    sqlite3_close(encDb);
+                }
+                std::filesystem::remove(tmpFs, ecRm);
+                return false;
+            }
+            if (sqlite3_key_v2(encDb, "main", key32.data(), static_cast<int>(key32.size())) != SQLITE_OK) {
+                errOut = sqlite3_errmsg(encDb);
+                sqlite3_close(encDb);
+                std::filesystem::remove(tmpFs, ecRm);
+                return false;
+            }
+            if (!ApplySqlcipherStrictPragmas(encDb, errOut)) {
+                sqlite3_close(encDb);
+                std::filesystem::remove(tmpFs, ecRm);
+                return false;
+            }
+            if (!ProbeSqliteMasterReadable(encDb, errOut)) {
+                sqlite3_close(encDb);
+                std::filesystem::remove(tmpFs, ecRm);
+                return false;
+            }
+            sqlite3_close(encDb);
+
+            std::filesystem::path bakFs = dbPathFs;
+            bakFs += ".pre_sqlcipher.bak";
+            std::error_code                 ec;
+            std::filesystem::remove(bakFs, ec);
+            std::filesystem::rename(dbPathFs, bakFs, ec);
+            if (ec) {
+                errOut = std::string("rename plaintext db to .pre_sqlcipher.bak failed: ") + ec.message();
+                std::filesystem::remove(tmpFs, ecRm);
+                return false;
+            }
+            std::error_code ec2;
+            std::filesystem::rename(tmpFs, dbPathFs, ec2);
+            if (ec2) {
+                errOut = std::string("rename encrypted temp to metadata db failed: ") + ec2.message();
+                std::error_code ec3;
+                std::filesystem::rename(bakFs, dbPathFs, ec3);
+                return false;
+            }
+            std::filesystem::remove(bakFs, ecRm);
+            return true;
+        }
+
+        static bool MaybeMigratePlainMetadataDb(
+            const std::filesystem::path& pathFs,
+            const std::string&           dbUtf8,
+            const std::vector<uint8_t>&  key32,
+            std::string&                 errOut)
+        {
+            bool isPlain = false;
+            if (!FileHeaderIsPlainSqlite(pathFs, isPlain, errOut)) {
+                return false;
+            }
+            if (!isPlain) {
+                return true;
+            }
+            return MigratePlainFileToSqlcipher(pathFs, dbUtf8, key32, errOut);
+        }
+#endif // ZCHATIM_USE_SQLCIPHER
+
+        constexpr int kSchemaUserVersion = 6;
 
         // Executed as a single script (sqlite3_exec).
         const char kCreateSchema[] =
@@ -128,6 +391,24 @@ namespace ZChatIM::mm2 {
             "  resume_chunk INTEGER NOT NULL DEFAULT 0,\n"
             "  complete_sha256 BLOB,\n"
             "  status INTEGER NOT NULL DEFAULT 0\n"
+            ");\n"
+            // MM1/JNI UserData：`MM2::StoreMm1UserDataBlob` / `SqliteMetadataDb::UpsertMm1UserKvBlob`
+            "CREATE TABLE IF NOT EXISTS mm1_user_kv (\n"
+            "  user_id BLOB NOT NULL,\n"
+            "  type INTEGER NOT NULL,\n"
+            "  data BLOB NOT NULL,\n"
+            "  updated_ms INTEGER NOT NULL,\n"
+            "  PRIMARY KEY (user_id, type)\n"
+            ");\n"
+            // MM1 **`GroupMuteManager`**：**`duration_s=-1`** 表示永久；否则 **`start_ms + duration_s*1000`** 为结束（Unix 毫秒）。
+            "CREATE TABLE IF NOT EXISTS mm2_group_mute (\n"
+            "  group_id BLOB NOT NULL,\n"
+            "  user_id BLOB NOT NULL,\n"
+            "  start_ms INTEGER NOT NULL,\n"
+            "  duration_s INTEGER NOT NULL,\n"
+            "  muted_by BLOB NOT NULL,\n"
+            "  reason BLOB,\n"
+            "  PRIMARY KEY (group_id, user_id)\n"
             ");\n";
 
         bool TableHasColumn(sqlite3* db, const char* table, const char* col, bool& out, std::string& errOut)
@@ -204,6 +485,20 @@ namespace ZChatIM::mm2 {
             return true;
         }
 
+        // MM1/JNI `mm1_user_kv`：单条 BLOB 上限（与 `UpsertMm1UserKvBlob` 一致）。
+        constexpr size_t kMm1UserKvMaxBlobBytes = 16U * 1024U * 1024U;
+
+        constexpr size_t kGroupMuteReasonMaxBytes = 4096U;
+
+        bool ExpectMm1UserKvDataSize(size_t byteLen, std::string& errOut)
+        {
+            if (byteLen > kMm1UserKvMaxBlobBytes) {
+                errOut = "mm1_user_kv data exceeds max size (16 MiB)";
+                return false;
+            }
+            return true;
+        }
+
         bool CopySha256Column(sqlite3_stmt* stmt, int colIndex, uint8_t sha256Out[32], std::string& errOut)
         {
             if (sha256Out == nullptr) {
@@ -245,21 +540,95 @@ namespace ZChatIM::mm2 {
 
     SqliteMetadataDb& SqliteMetadataDb::operator=(SqliteMetadataDb&&) noexcept = default;
 
+#if defined(ZCHATIM_USE_SQLCIPHER)
+
+    bool SqliteMetadataDb::Open(const std::filesystem::path& dbPath, const std::vector<uint8_t>& sqlcipherKey32)
+    {
+        if (!impl_) {
+            return false;
+        }
+#    ifdef _WIN32
+        std::string utf8;
+        if (!WidePathToUtf8(dbPath.native(), utf8, impl_->lastError)) {
+            return false;
+        }
+        return Open(utf8, sqlcipherKey32);
+#    else
+        return Open(dbPath.u8string(), sqlcipherKey32);
+#    endif
+    }
+
+    bool SqliteMetadataDb::Open(const std::string& dbPathUtf8, const std::vector<uint8_t>& sqlcipherKey32)
+    {
+        if (!impl_) {
+            return false;
+        }
+        if (sqlcipherKey32.size() != static_cast<size_t>(ZChatIM::CRYPTO_KEY_SIZE)) {
+            impl_->lastError = "SQLCipher key must be exactly 32 bytes";
+            return false;
+        }
+        Close();
+
+        std::string openUtf8 = dbPathUtf8;
+        NormalizeUtf8PathSlashes(openUtf8);
+        const std::filesystem::path pathForProbe = std::filesystem::u8path(openUtf8);
+        if (!MaybeMigratePlainMetadataDb(pathForProbe, openUtf8, sqlcipherKey32, impl_->lastError)) {
+            return false;
+        }
+
+        sqlite3* raw = nullptr;
+        const int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
+        const int rc    = sqlite3_open_v2(openUtf8.c_str(), &raw, flags, nullptr);
+        if (rc != SQLITE_OK) {
+            impl_->lastError = raw ? sqlite3_errmsg(raw) : "sqlite3_open_v2 failed";
+            if (raw != nullptr) {
+                sqlite3_close(raw);
+            }
+            return false;
+        }
+        impl_->db = raw;
+
+        if (sqlite3_key_v2(impl_->db, "main", sqlcipherKey32.data(), static_cast<int>(sqlcipherKey32.size())) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            sqlite3_close(impl_->db);
+            impl_->db = nullptr;
+            return false;
+        }
+        if (!ApplySqlcipherStrictPragmas(impl_->db, impl_->lastError)) {
+            sqlite3_close(impl_->db);
+            impl_->db = nullptr;
+            return false;
+        }
+        if (!ProbeSqliteMasterReadable(impl_->db, impl_->lastError)) {
+            sqlite3_close(impl_->db);
+            impl_->db = nullptr;
+            return false;
+        }
+
+        sqlite3_exec(impl_->db, "PRAGMA foreign_keys = ON;", nullptr, nullptr, nullptr);
+        sqlite3_busy_timeout(impl_->db, 5000);
+
+        impl_->lastError.clear();
+        return true;
+    }
+
+#else
+
     bool SqliteMetadataDb::Open(const std::filesystem::path& dbPath)
     {
         if (!impl_) {
             return false;
         }
-#ifdef _WIN32
+#    ifdef _WIN32
         std::string utf8;
         if (!WidePathToUtf8(dbPath.native(), utf8, impl_->lastError)) {
             return false;
         }
         return Open(utf8);
-#else
+#    else
         // POSIX: path native narrow is typically UTF-8; u8string() is the portable spelling.
         return Open(dbPath.u8string());
-#endif
+#    endif
     }
 
     bool SqliteMetadataDb::Open(const std::string& dbPath)
@@ -288,6 +657,8 @@ namespace ZChatIM::mm2 {
         return true;
     }
 
+#endif // ZCHATIM_USE_SQLCIPHER
+
     void SqliteMetadataDb::Close()
     {
         if (!impl_ || impl_->db == nullptr) {
@@ -297,6 +668,25 @@ namespace ZChatIM::mm2 {
         impl_->db = nullptr;
         impl_->lastError.clear();
     }
+
+#if defined(ZCHATIM_USE_SQLCIPHER)
+    bool DeriveMetadataSqlcipherKeyFromMessageMaster(
+        const std::vector<uint8_t>& messageMasterKey32,
+        std::vector<uint8_t>&       outSqlcipherKey32)
+    {
+        outSqlcipherKey32.clear();
+        if (messageMasterKey32.size() != static_cast<size_t>(ZChatIM::CRYPTO_KEY_SIZE)) {
+            return false;
+        }
+        static constexpr char kDomain[] = "ZChatIM|MM2|SqliteMetadata|SQLCipher|v1";
+        std::vector<uint8_t> buf;
+        buf.reserve(messageMasterKey32.size() + sizeof(kDomain) - 1U);
+        buf.insert(buf.end(), messageMasterKey32.begin(), messageMasterKey32.end());
+        buf.insert(buf.end(), kDomain, kDomain + sizeof(kDomain) - 1U);
+        outSqlcipherKey32.resize(ZChatIM::SHA256_SIZE);
+        return Crypto::HashSha256(buf.data(), buf.size(), outSqlcipherKey32.data());
+    }
+#endif
 
     bool SqliteMetadataDb::IsOpen() const
     {
@@ -702,6 +1092,130 @@ namespace ZChatIM::mm2 {
         return true;
     }
 
+    bool SqliteMetadataDb::UpsertMm1UserKvBlob(
+        const std::vector<uint8_t>& userId,
+        int32_t                     type,
+        const std::vector<uint8_t>& data)
+    {
+        if (!IsOpen()) {
+            impl_->lastError = "database not open";
+            return false;
+        }
+        if (!ExpectUserIdBlob(userId, impl_->lastError) || !ExpectMm1UserKvDataSize(data.size(), impl_->lastError)) {
+            return false;
+        }
+        const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::system_clock::now().time_since_epoch())
+                                  .count();
+        static const char sql[] =
+            "INSERT INTO mm1_user_kv (user_id, type, data, updated_ms) VALUES (?, ?, ?, ?)\n"
+            "ON CONFLICT(user_id, type) DO UPDATE SET data = excluded.data, updated_ms = excluded.updated_ms;";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        sqlite3_bind_blob(stmt, 1, userId.data(), static_cast<int>(userId.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt, 2, static_cast<int>(type));
+        const void* dataPtr = data.empty() ? "" : static_cast<const void*>(data.data());
+        sqlite3_bind_blob(stmt, 3, dataPtr, static_cast<int>(data.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 4, static_cast<sqlite3_int64>(nowMs));
+        const int step = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+        if (step != SQLITE_DONE) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        impl_->lastError.clear();
+        return true;
+    }
+
+    bool SqliteMetadataDb::GetMm1UserKvBlob(
+        const std::vector<uint8_t>& userId,
+        int32_t                     type,
+        std::vector<uint8_t>&       outData)
+    {
+        outData.clear();
+        if (!IsOpen()) {
+            impl_->lastError = "database not open";
+            return false;
+        }
+        if (!ExpectUserIdBlob(userId, impl_->lastError)) {
+            return false;
+        }
+        static const char sql[] = "SELECT data FROM mm1_user_kv WHERE user_id = ? AND type = ?;";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        sqlite3_bind_blob(stmt, 1, userId.data(), static_cast<int>(userId.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt, 2, static_cast<int>(type));
+        const int step = sqlite3_step(stmt);
+        if (step == SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            impl_->lastError.clear();
+            return true;
+        }
+        if (step != SQLITE_ROW) {
+            sqlite3_finalize(stmt);
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        if (sqlite3_column_type(stmt, 0) != SQLITE_BLOB) {
+            sqlite3_finalize(stmt);
+            impl_->lastError = "mm1_user_kv data column not BLOB";
+            return false;
+        }
+        const void* blob = sqlite3_column_blob(stmt, 0);
+        const int   n    = sqlite3_column_bytes(stmt, 0);
+        if (n < 0 || static_cast<size_t>(n) > kMm1UserKvMaxBlobBytes) {
+            sqlite3_finalize(stmt);
+            impl_->lastError = "mm1_user_kv data length invalid";
+            return false;
+        }
+        if (n == 0) {
+            outData.clear();
+        } else if (blob != nullptr) {
+            outData.assign(static_cast<const uint8_t*>(blob), static_cast<const uint8_t*>(blob) + static_cast<size_t>(n));
+        } else {
+            sqlite3_finalize(stmt);
+            impl_->lastError = "mm1_user_kv data blob null";
+            return false;
+        }
+        sqlite3_finalize(stmt);
+        impl_->lastError.clear();
+        return true;
+    }
+
+    bool SqliteMetadataDb::DeleteMm1UserKvBlob(const std::vector<uint8_t>& userId, int32_t type)
+    {
+        if (!IsOpen()) {
+            impl_->lastError = "database not open";
+            return false;
+        }
+        if (!ExpectUserIdBlob(userId, impl_->lastError)) {
+            return false;
+        }
+        static const char sql[] = "DELETE FROM mm1_user_kv WHERE user_id = ? AND type = ?;";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        sqlite3_bind_blob(stmt, 1, userId.data(), static_cast<int>(userId.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt, 2, static_cast<int>(type));
+        const int step = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+        if (step != SQLITE_DONE) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        const int changes = sqlite3_changes(impl_->db);
+        impl_->lastError.clear();
+        return changes > 0;
+    }
+
     bool SqliteMetadataDb::UpsertGroupData(
         const std::vector<uint8_t>& groupId,
         const std::string&          fileId,
@@ -806,6 +1320,11 @@ namespace ZChatIM::mm2 {
         if (!ExpectUserIdBlob(userId, impl_->lastError)) {
             return false;
         }
+        // 与 MM1 `GroupManager` 约定一致：**0=member，1=admin，2=owner**；拒绝篡改或错误写入。
+        if (role != 0 && role != 1 && role != 2) {
+            impl_->lastError = "group_members: role must be 0, 1, or 2";
+            return false;
+        }
         static const char sql[] =
             "INSERT INTO group_members (group_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)\n"
             "ON CONFLICT(group_id, user_id) DO UPDATE SET role = excluded.role, joined_at = excluded.joined_at;";
@@ -864,6 +1383,49 @@ namespace ZChatIM::mm2 {
         roleOut     = sqlite3_column_int(stmt, 0);
         joinedAtOut = sqlite3_column_int64(stmt, 1);
         sqlite3_finalize(stmt);
+        if (roleOut != 0 && roleOut != 1 && roleOut != 2) {
+            impl_->lastError = "group_members: invalid role value in database";
+            return false;
+        }
+        impl_->lastError.clear();
+        return true;
+    }
+
+    bool SqliteMetadataDb::GetGroupMemberRowExists(
+        const std::vector<uint8_t>& groupId,
+        const std::vector<uint8_t>& userId,
+        bool&                       outExists)
+    {
+        outExists = false;
+        if (!IsOpen()) {
+            impl_->lastError = "database not open";
+            return false;
+        }
+        if (!ExpectUserIdBlob(groupId, impl_->lastError)) {
+            return false;
+        }
+        if (!ExpectUserIdBlob(userId, impl_->lastError)) {
+            return false;
+        }
+        static const char sql[] =
+            "SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ? LIMIT 1;";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        sqlite3_bind_blob(stmt, 1, groupId.data(), static_cast<int>(groupId.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_blob(stmt, 2, userId.data(), static_cast<int>(userId.size()), SQLITE_TRANSIENT);
+        const int step = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+        if (step == SQLITE_ROW) {
+            outExists = true;
+        } else if (step == SQLITE_DONE) {
+            outExists = false;
+        } else {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
         impl_->lastError.clear();
         return true;
     }
@@ -896,6 +1458,47 @@ namespace ZChatIM::mm2 {
         }
         if (sqlite3_changes(impl_->db) == 0) {
             impl_->lastError = "group_members delete: row not found";
+            return false;
+        }
+        impl_->lastError.clear();
+        return true;
+    }
+
+    bool SqliteMetadataDb::ListGroupMemberUserIds(
+        const std::vector<uint8_t>& groupId,
+        std::vector<std::vector<uint8_t>>& outUserIds)
+    {
+        outUserIds.clear();
+        if (!IsOpen()) {
+            impl_->lastError = "database not open";
+            return false;
+        }
+        if (!ExpectUserIdBlob(groupId, impl_->lastError)) {
+            return false;
+        }
+        static const char sql[] =
+            "SELECT user_id FROM group_members WHERE group_id = ? ORDER BY joined_at, user_id;";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        sqlite3_bind_blob(stmt, 1, groupId.data(), static_cast<int>(groupId.size()), SQLITE_TRANSIENT);
+        int rc = SQLITE_OK;
+        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+            const void* blob = sqlite3_column_blob(stmt, 0);
+            const int   blen = sqlite3_column_bytes(stmt, 0);
+            if (blob == nullptr || blen != USER_ID_SIZE) {
+                sqlite3_finalize(stmt);
+                impl_->lastError = "group_members list: invalid user_id blob";
+                return false;
+            }
+            const auto* p = static_cast<const uint8_t*>(blob);
+            outUserIds.emplace_back(p, p + USER_ID_SIZE);
+        }
+        sqlite3_finalize(stmt);
+        if (rc != SQLITE_DONE) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
             return false;
         }
         impl_->lastError.clear();
@@ -1814,6 +2417,143 @@ namespace ZChatIM::mm2 {
         return true;
     }
 
+    bool SqliteMetadataDb::GetFriendRequestRow(
+        const std::vector<uint8_t>& requestId,
+        std::vector<uint8_t>&       outFromUser,
+        std::vector<uint8_t>&       outToUser,
+        int32_t&                    outStatus)
+    {
+        outFromUser.clear();
+        outToUser.clear();
+        outStatus = -1;
+        if (!IsOpen()) {
+            impl_->lastError = "database not open";
+            return false;
+        }
+        if (!ExpectDataIdBlob(requestId, impl_->lastError)) {
+            return false;
+        }
+        static const char sql[] = "SELECT from_user, to_user, status FROM friend_requests WHERE request_id = ?;";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        sqlite3_bind_blob(stmt, 1, requestId.data(), static_cast<int>(requestId.size()), SQLITE_TRANSIENT);
+        const int step = sqlite3_step(stmt);
+        if (step != SQLITE_ROW) {
+            sqlite3_finalize(stmt);
+            impl_->lastError = (step == SQLITE_DONE) ? "friend request not found" : sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        if (sqlite3_column_type(stmt, 0) != SQLITE_BLOB || sqlite3_column_type(stmt, 1) != SQLITE_BLOB) {
+            sqlite3_finalize(stmt);
+            impl_->lastError = "friend_requests from_user/to_user not BLOB";
+            return false;
+        }
+        const void* f0 = sqlite3_column_blob(stmt, 0);
+        const int   n0 = sqlite3_column_bytes(stmt, 0);
+        const void* f1 = sqlite3_column_blob(stmt, 1);
+        const int   n1 = sqlite3_column_bytes(stmt, 1);
+        if (n0 != static_cast<int>(USER_ID_SIZE) || n1 != static_cast<int>(USER_ID_SIZE) || f0 == nullptr
+            || f1 == nullptr) {
+            sqlite3_finalize(stmt);
+            impl_->lastError = "friend_requests user id length invalid";
+            return false;
+        }
+        outFromUser.assign(static_cast<const uint8_t*>(f0), static_cast<const uint8_t*>(f0) + n0);
+        outToUser.assign(static_cast<const uint8_t*>(f1), static_cast<const uint8_t*>(f1) + n1);
+        outStatus = sqlite3_column_int(stmt, 2);
+        sqlite3_finalize(stmt);
+        impl_->lastError.clear();
+        return true;
+    }
+
+    bool SqliteMetadataDb::ListAcceptedFriendPeerUserIds(
+        const std::vector<uint8_t>& userId,
+        std::vector<std::vector<uint8_t>>& outPeers)
+    {
+        outPeers.clear();
+        if (!IsOpen()) {
+            impl_->lastError = "database not open";
+            return false;
+        }
+        if (!ExpectUserIdBlob(userId, impl_->lastError)) {
+            return false;
+        }
+        static const char sql[] =
+            "SELECT to_user FROM friend_requests WHERE status = 1 AND from_user = ? "
+            "UNION "
+            "SELECT from_user FROM friend_requests WHERE status = 1 AND to_user = ?;";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        sqlite3_bind_blob(stmt, 1, userId.data(), static_cast<int>(userId.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_blob(stmt, 2, userId.data(), static_cast<int>(userId.size()), SQLITE_TRANSIENT);
+        std::set<std::string> seen;
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            if (sqlite3_column_type(stmt, 0) != SQLITE_BLOB) {
+                sqlite3_finalize(stmt);
+                impl_->lastError = "ListAcceptedFriendPeerUserIds: peer column not BLOB";
+                outPeers.clear();
+                return false;
+            }
+            const void* p = sqlite3_column_blob(stmt, 0);
+            const int   n = sqlite3_column_bytes(stmt, 0);
+            if (n != static_cast<int>(USER_ID_SIZE) || p == nullptr) {
+                sqlite3_finalize(stmt);
+                impl_->lastError = "ListAcceptedFriendPeerUserIds: peer id length invalid";
+                outPeers.clear();
+                return false;
+            }
+            const std::string key(static_cast<const char*>(p), static_cast<size_t>(n));
+            if (seen.insert(key).second) {
+                const auto* u = static_cast<const uint8_t*>(p);
+                outPeers.emplace_back(u, u + n);
+            }
+        }
+        sqlite3_finalize(stmt);
+        impl_->lastError.clear();
+        return true;
+    }
+
+    bool SqliteMetadataDb::DeleteAcceptedFriendshipEdgesBetween(
+        const std::vector<uint8_t>& userA,
+        const std::vector<uint8_t>& userB)
+    {
+        if (!IsOpen()) {
+            impl_->lastError = "database not open";
+            return false;
+        }
+        if (!ExpectUserIdBlob(userA, impl_->lastError) || !ExpectUserIdBlob(userB, impl_->lastError)) {
+            return false;
+        }
+        static const char sql[] =
+            "DELETE FROM friend_requests WHERE status = 1 AND "
+            "((from_user = ?1 AND to_user = ?2) OR (from_user = ?2 AND to_user = ?1));";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        sqlite3_bind_blob(stmt, 1, userA.data(), static_cast<int>(userA.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_blob(stmt, 2, userB.data(), static_cast<int>(userB.size()), SQLITE_TRANSIENT);
+        const int step = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+        if (step != SQLITE_DONE) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        if (sqlite3_changes(impl_->db) < 1) {
+            impl_->lastError = "DeleteAcceptedFriendshipEdgesBetween: no accepted edge";
+            return false;
+        }
+        impl_->lastError.clear();
+        return true;
+    }
+
     bool SqliteMetadataDb::UpsertGroupDisplayName(
         const std::vector<uint8_t>& groupId,
         const std::string&          nameUtf8,
@@ -1829,6 +2569,12 @@ namespace ZChatIM::mm2 {
         }
         if (nameUtf8.empty()) {
             impl_->lastError = "group name must be non-empty";
+            return false;
+        }
+        // 与 MM1 `GroupManager::CreateGroup` 上限一致，防止超大字符串压库。
+        constexpr size_t kMaxGroupDisplayNameUtf8 = 2048;
+        if (nameUtf8.size() > kMaxGroupDisplayNameUtf8) {
+            impl_->lastError = "group name exceeds max UTF-8 length";
             return false;
         }
         static const char sql[] = "INSERT INTO mm2_group_display (group_id, name, updated_s, updated_by) VALUES (?, ?, ?, ?) "
@@ -1885,6 +2631,208 @@ namespace ZChatIM::mm2 {
         }
         outNameUtf8.assign(reinterpret_cast<const char*>(t), static_cast<size_t>(n));
         sqlite3_finalize(stmt);
+        impl_->lastError.clear();
+        return true;
+    }
+
+    bool SqliteMetadataDb::DeleteGroupDisplayName(const std::vector<uint8_t>& groupId)
+    {
+        if (!IsOpen()) {
+            impl_->lastError = "database not open";
+            return false;
+        }
+        if (!ExpectUserIdBlob(groupId, impl_->lastError)) {
+            return false;
+        }
+        static const char sql[] = "DELETE FROM mm2_group_display WHERE group_id = ?;";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        sqlite3_bind_blob(stmt, 1, groupId.data(), static_cast<int>(groupId.size()), SQLITE_TRANSIENT);
+        const int step = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+        if (step != SQLITE_DONE) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        impl_->lastError.clear();
+        return true;
+    }
+
+    bool SqliteMetadataDb::UpsertGroupMute(
+        const std::vector<uint8_t>& groupId,
+        const std::vector<uint8_t>& userId,
+        int64_t                     startMs,
+        int64_t                     durationSeconds,
+        const std::vector<uint8_t>& mutedBy,
+        const std::vector<uint8_t>& reason)
+    {
+        if (!IsOpen()) {
+            impl_->lastError = "database not open";
+            return false;
+        }
+        if (!ExpectUserIdBlob(groupId, impl_->lastError) || !ExpectUserIdBlob(userId, impl_->lastError)
+            || !ExpectUserIdBlob(mutedBy, impl_->lastError)) {
+            return false;
+        }
+        if (reason.size() > kGroupMuteReasonMaxBytes) {
+            impl_->lastError = "mm2_group_mute reason exceeds max size";
+            return false;
+        }
+        static const char sql[] =
+            "INSERT INTO mm2_group_mute (group_id, user_id, start_ms, duration_s, muted_by, reason) "
+            "VALUES (?, ?, ?, ?, ?, ?)\n"
+            "ON CONFLICT(group_id, user_id) DO UPDATE SET "
+            "start_ms=excluded.start_ms, duration_s=excluded.duration_s, muted_by=excluded.muted_by, reason=excluded.reason;";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        sqlite3_bind_blob(stmt, 1, groupId.data(), static_cast<int>(groupId.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_blob(stmt, 2, userId.data(), static_cast<int>(userId.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 3, static_cast<sqlite3_int64>(startMs));
+        sqlite3_bind_int64(stmt, 4, static_cast<sqlite3_int64>(durationSeconds));
+        sqlite3_bind_blob(stmt, 5, mutedBy.data(), static_cast<int>(mutedBy.size()), SQLITE_TRANSIENT);
+        if (reason.empty()) {
+            sqlite3_bind_null(stmt, 6);
+        } else {
+            sqlite3_bind_blob(stmt, 6, reason.data(), static_cast<int>(reason.size()), SQLITE_TRANSIENT);
+        }
+        const int step = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+        if (step != SQLITE_DONE) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        impl_->lastError.clear();
+        return true;
+    }
+
+    bool SqliteMetadataDb::DeleteGroupMute(const std::vector<uint8_t>& groupId, const std::vector<uint8_t>& userId)
+    {
+        if (!IsOpen()) {
+            impl_->lastError = "database not open";
+            return false;
+        }
+        if (!ExpectUserIdBlob(groupId, impl_->lastError) || !ExpectUserIdBlob(userId, impl_->lastError)) {
+            return false;
+        }
+        static const char sql[] = "DELETE FROM mm2_group_mute WHERE group_id = ? AND user_id = ?;";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        sqlite3_bind_blob(stmt, 1, groupId.data(), static_cast<int>(groupId.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_blob(stmt, 2, userId.data(), static_cast<int>(userId.size()), SQLITE_TRANSIENT);
+        const int step = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+        if (step != SQLITE_DONE) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        impl_->lastError.clear();
+        return true;
+    }
+
+    bool SqliteMetadataDb::GetGroupMuteRow(
+        const std::vector<uint8_t>& groupId,
+        const std::vector<uint8_t>& userId,
+        bool&                       outExists,
+        int64_t&                    outStartMs,
+        int64_t&                    outDurationS,
+        std::vector<uint8_t>&       outMutedBy,
+        std::vector<uint8_t>&       outReason)
+    {
+        outExists     = false;
+        outStartMs    = 0;
+        outDurationS  = 0;
+        outMutedBy.clear();
+        outReason.clear();
+        if (!IsOpen()) {
+            impl_->lastError = "database not open";
+            return false;
+        }
+        if (!ExpectUserIdBlob(groupId, impl_->lastError) || !ExpectUserIdBlob(userId, impl_->lastError)) {
+            return false;
+        }
+        static const char sql[] =
+            "SELECT start_ms, duration_s, muted_by, reason FROM mm2_group_mute WHERE group_id = ? AND user_id = ?;";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        sqlite3_bind_blob(stmt, 1, groupId.data(), static_cast<int>(groupId.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_blob(stmt, 2, userId.data(), static_cast<int>(userId.size()), SQLITE_TRANSIENT);
+        const int step = sqlite3_step(stmt);
+        if (step == SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            impl_->lastError.clear();
+            return true;
+        }
+        if (step != SQLITE_ROW) {
+            sqlite3_finalize(stmt);
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        outStartMs   = sqlite3_column_int64(stmt, 0);
+        outDurationS = sqlite3_column_int64(stmt, 1);
+        if (sqlite3_column_type(stmt, 2) != SQLITE_BLOB) {
+            sqlite3_finalize(stmt);
+            impl_->lastError = "mm2_group_mute muted_by not BLOB";
+            return false;
+        }
+        const void* mb = sqlite3_column_blob(stmt, 2);
+        const int   nb = sqlite3_column_bytes(stmt, 2);
+        if (mb == nullptr || nb != static_cast<int>(ZChatIM::USER_ID_SIZE)) {
+            sqlite3_finalize(stmt);
+            impl_->lastError = "mm2_group_mute muted_by length invalid";
+            return false;
+        }
+        outMutedBy.assign(static_cast<const uint8_t*>(mb), static_cast<const uint8_t*>(mb) + nb);
+        if (sqlite3_column_type(stmt, 3) == SQLITE_NULL) {
+            outReason.clear();
+        } else if (sqlite3_column_type(stmt, 3) == SQLITE_BLOB) {
+            const void* rb = sqlite3_column_blob(stmt, 3);
+            const int   nr = sqlite3_column_bytes(stmt, 3);
+            if (rb != nullptr && nr > 0) {
+                outReason.assign(static_cast<const uint8_t*>(rb), static_cast<const uint8_t*>(rb) + nr);
+            }
+        } else {
+            sqlite3_finalize(stmt);
+            impl_->lastError = "mm2_group_mute reason column invalid";
+            return false;
+        }
+        sqlite3_finalize(stmt);
+        outExists = true;
+        impl_->lastError.clear();
+        return true;
+    }
+
+    bool SqliteMetadataDb::DeleteExpiredGroupMutes(int64_t nowMs)
+    {
+        if (!IsOpen()) {
+            impl_->lastError = "database not open";
+            return false;
+        }
+        static const char sql[] =
+            "DELETE FROM mm2_group_mute WHERE duration_s >= 0 AND (start_ms + duration_s * 1000) <= ?;";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        sqlite3_bind_int64(stmt, 1, static_cast<sqlite3_int64>(nowMs));
+        const int step = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+        if (step != SQLITE_DONE) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
         impl_->lastError.clear();
         return true;
     }

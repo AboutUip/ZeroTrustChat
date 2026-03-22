@@ -2,7 +2,7 @@
 
 > **文档类型**：**产品与 MM1 会话模型**；与 **MM2 消息落盘** 独立（多设备均可读同一用户本地库或各自客户端库，部署相关）。  
 > **权威**：**`docs/03-Business/04-Session.md`**（idle/心跳）；JNI 契约 **`docs/06-Appendix/01-JNI.md`**「八、会话与多设备」。  
-> **实现状态**：**`05-ZChatIM-Implementation-Status.md` 第3节**：除 **`AuthSessionManager` / `SessionActivityManager`** 外，**`MM1` 大量 Manager 仍无 `.cpp`**；**`registerDeviceSession` / `getDeviceSessions` 等 JNI 方法**在 **`JniInterface.h` 已声明**，**native 桥接未接**（**第4节**）。
+> **实现状态**：**`05-ZChatIM-Implementation-Status.md` 第3节**：**JNI** **`registerDeviceSession` / `getDeviceSessions` 等** 已接 **`JniBridge` + `jni/JniNatives.cpp`**；**`DeviceSessionManager`** 当前为 **进程内内存实现**（**`MM1_manager_stubs.cpp`**），**非**持久化/集群级产品形态。
 
 ---
 
@@ -81,12 +81,12 @@
 
 | C++（`JniInterface`） | 说明 |
 |----------------------|------|
-| `RegisterDeviceSession` | 注册设备会话；返回可空（踢出信息） |
+| `RegisterDeviceSession` | 注册设备会话；C++ **`bool` + `outKicked`**；Java **`null`**=失败，**`byte[0]`**=成功无踢，**16B**=被踢会话 id |
 | `UpdateLastActive` | 更新活跃时间 |
 | `GetDeviceSessions` | 列举设备会话（编码见 **`01-JNI.md`**） |
 | `CleanupExpiredDeviceSessions` | 清理过期设备会话 |
 
-实现 MUST：首参 **`callerSessionId`**，先 **`VerifySession`**（**`JniSecurityPolicy.h`**）。
+实现 MUST：首参 **`callerSessionId`**，须通过与会话 **`VerifySession` 等价**的校验（**`JniBridge`** 使用 **`TryGetSessionUserId`**，见 **`docs/06-Appendix/01-JNI.md`** 文首与 **`JniSecurityPolicy.h`**）。
 
 ---
 

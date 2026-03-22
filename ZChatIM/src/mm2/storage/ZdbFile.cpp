@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <vector>
 
 namespace ZChatIM::mm2 {
@@ -128,7 +129,7 @@ namespace ZChatIM::mm2 {
             return false;
         }
 
-        // 头之后至文件尾：用 CSPRNG 填满（与产品文档「随机噪声」一致；不依赖 Crypto::Init；Win=BCrypt 链，Unix=RAND/urandom）
+        // 头之后至文件尾：用 CSPRNG 填满（与产品文档「随机噪声」一致；不依赖 Crypto::Init；OpenSSL RAND_bytes，Unix 可再读 /dev/urandom）
         const size_t kChunk = ZChatIM::FILE_CHUNK_SIZE;
         for (uint64_t pos = kHeaderBytes; pos < m_header.totalSize;) {
             const uint64_t remain = m_header.totalSize - pos;
@@ -267,6 +268,10 @@ namespace ZChatIM::mm2 {
             m_lastError = "AppendRaw null data";
             return false;
         }
+        if (length > static_cast<size_t>((std::numeric_limits<std::streamsize>::max)())) {
+            m_lastError = "AppendRaw length too large for stream";
+            return false;
+        }
         m_file.seekp(static_cast<std::streamoff>(start));
         if (length > 0) {
             m_file.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(length));
@@ -312,8 +317,23 @@ namespace ZChatIM::mm2 {
 
     bool ZdbFile::OverwriteData(uint64_t offset, size_t length)
     {
-        std::vector<uint8_t> z(length, 0);
-        return WriteData(offset, z.data(), z.size());
+        if (length == 0) {
+            return true;
+        }
+        // 分块清零，避免单次 `vector(length)` 在极大 length 下 OOM 或异常分配。
+        constexpr size_t     kChunk = ZChatIM::FILE_CHUNK_SIZE;
+        std::vector<uint8_t> zeros(std::min(kChunk, length), 0);
+        size_t               remain = length;
+        uint64_t             pos    = offset;
+        while (remain > 0) {
+            const size_t n = static_cast<size_t>(std::min<uint64_t>(remain, zeros.size()));
+            if (!WriteData(pos, zeros.data(), n)) {
+                return false;
+            }
+            pos += n;
+            remain -= n;
+        }
+        return true;
     }
 
     bool ZdbFile::AllocateSpace(size_t size, uint64_t& outOffset)

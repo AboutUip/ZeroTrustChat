@@ -1,4 +1,4 @@
-// Stub implementations for mm1::security::* (headers declare out-of-line ctors/methods).
+// mm1::security::* — memory/RNG/key helpers delegate to `common::*` and `mm2::Crypto`.
 
 #include "mm1/SecurityMemory.h"
 #include "mm1/MemoryEncryption.h"
@@ -8,8 +8,28 @@
 #include "mm1/KeyManagement.h"
 #include "mm1/SecureRandom.h"
 
+#include "common/Memory.h"
+#include "common/Random.h"
+#include "mm2/storage/Crypto.h"
+#include "Types.h"
+
 #include <cstring>
+#include <mutex>
+#include <random>
 #include <string>
+
+#if defined(_WIN32)
+#    ifndef WIN32_LEAN_AND_MEAN
+#        define WIN32_LEAN_AND_MEAN
+#    endif
+#    ifndef NOMINMAX
+#        define NOMINMAX
+#    endif
+#    include <windows.h>
+#endif
+#if defined(ZCHATIM_HAVE_JNI)
+#    include <jni.h>
+#endif
 
 namespace ZChatIM::mm1::security {
 
@@ -24,49 +44,72 @@ namespace ZChatIM::mm1::security {
 
     void* SecurityMemory::Allocate(size_t size)
     {
-        (void)size;
-        return nullptr;
+        std::lock_guard<std::mutex> lk(m_mutex);
+        void* p = common::Memory::Allocate(size);
+        if (p) {
+            m_allocatedMemory[p] = size;
+        }
+        return p;
     }
 
     void SecurityMemory::Free(void* ptr)
     {
-        (void)ptr;
+        if (!ptr) {
+            return;
+        }
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_allocatedMemory.erase(ptr);
+        common::Memory::Free(ptr);
     }
 
     void* SecurityMemory::Reallocate(void* ptr, size_t newSize)
     {
-        (void)ptr;
-        (void)newSize;
-        return nullptr;
+        std::lock_guard<std::mutex> lk(m_mutex);
+        void* q = common::Memory::Reallocate(ptr, newSize);
+        if (newSize == 0 && ptr) {
+            m_allocatedMemory.erase(ptr);
+            return nullptr;
+        }
+        if (!q) {
+            return nullptr;
+        }
+        if (ptr && ptr != q) {
+            m_allocatedMemory.erase(ptr);
+        }
+        m_allocatedMemory[q] = newSize;
+        return q;
     }
 
     bool SecurityMemory::Lock(void* ptr, size_t size)
     {
-        (void)ptr;
-        (void)size;
-        return false;
+        if (!ptr || size == 0) {
+            return false;
+        }
+        return common::Memory::LockMemory(ptr, size);
     }
 
     bool SecurityMemory::Unlock(void* ptr, size_t size)
     {
-        (void)ptr;
-        (void)size;
-        return false;
+        if (!ptr || size == 0) {
+            return false;
+        }
+        return common::Memory::UnlockMemory(ptr, size);
     }
 
     bool SecurityMemory::Protect(void* ptr, size_t size, int protection)
     {
-        (void)ptr;
-        (void)size;
-        (void)protection;
-        return false;
+        if (!ptr || size == 0) {
+            return false;
+        }
+        return common::Memory::ProtectMemory(ptr, size, protection);
     }
 
     bool SecurityMemory::IsAccessible(const void* ptr, size_t size)
     {
-        (void)ptr;
-        (void)size;
-        return false;
+        if (!ptr || size == 0) {
+            return false;
+        }
+        return common::Memory::IsMemoryAccessible(ptr, size);
     }
 
     bool SecurityMemory::IsLocked(const void* ptr, size_t size)
@@ -78,19 +121,18 @@ namespace ZChatIM::mm1::security {
 
     size_t SecurityMemory::GetAllocatedSize() const
     {
-        return m_totalAllocated;
+        return common::Memory::GetAllocatedSize();
     }
 
     size_t SecurityMemory::GetPeakMemoryUsage() const
     {
-        return m_peakUsage;
+        return common::Memory::GetPeakMemoryUsage();
     }
 
     void SecurityMemory::ResetMemoryStats()
     {
-        m_allocatedMemory.clear();
-        m_totalAllocated = 0;
-        m_peakUsage      = 0;
+        std::lock_guard<std::mutex> lk(m_mutex);
+        common::Memory::ResetMemoryStats();
     }
 
     // --- MemoryEncryption ---
@@ -99,43 +141,49 @@ namespace ZChatIM::mm1::security {
 
     bool MemoryEncryption::Encrypt(void* ptr, size_t size, const uint8_t* key, size_t keySize)
     {
-        (void)ptr;
-        (void)size;
-        (void)key;
-        (void)keySize;
-        return false;
+        if (!ptr || size == 0 || !key || keySize == 0) {
+            return false;
+        }
+        return EncryptXor(ptr, size, key, keySize);
     }
 
     bool MemoryEncryption::Decrypt(void* ptr, size_t size, const uint8_t* key, size_t keySize)
     {
-        (void)ptr;
-        (void)size;
-        (void)key;
-        (void)keySize;
-        return false;
+        if (!ptr || size == 0 || !key || keySize == 0) {
+            return false;
+        }
+        return DecryptXor(ptr, size, key, keySize);
     }
 
     bool MemoryEncryption::EncryptBlock(void* ptr, size_t size, const uint8_t* key)
     {
-        (void)ptr;
-        (void)size;
-        (void)key;
-        return false;
+        if (!ptr || size == 0 || !key) {
+            return false;
+        }
+        common::Memory::EncryptMemory(ptr, size, key, CRYPTO_KEY_SIZE);
+        return true;
     }
 
     bool MemoryEncryption::DecryptBlock(void* ptr, size_t size, const uint8_t* key)
     {
-        (void)ptr;
-        (void)size;
-        (void)key;
-        return false;
+        if (!ptr || size == 0 || !key) {
+            return false;
+        }
+        common::Memory::DecryptMemory(ptr, size, key, CRYPTO_KEY_SIZE);
+        return true;
     }
 
     bool MemoryEncryption::GenerateKey(uint8_t* key, size_t keySize)
     {
-        (void)key;
-        (void)keySize;
-        return false;
+        if (!key || keySize == 0) {
+            return false;
+        }
+        const auto rnd = mm2::Crypto::GenerateSecureRandom(keySize);
+        if (rnd.size() != keySize) {
+            return false;
+        }
+        std::memcpy(key, rnd.data(), keySize);
+        return true;
     }
 
     bool MemoryEncryption::DeriveKey(
@@ -144,11 +192,20 @@ namespace ZChatIM::mm1::security {
         uint8_t*       outputKey,
         size_t         outputKeySize)
     {
-        (void)inputKey;
-        (void)inputKeySize;
-        (void)outputKey;
-        (void)outputKeySize;
-        return false;
+        if (!inputKey || inputKeySize == 0 || !outputKey || outputKeySize == 0) {
+            return false;
+        }
+        static const char kCtx[] = "ZChatIM|MM1|MemoryEncryption|v1";
+        if (!mm2::Crypto::Init()) {
+            return false;
+        }
+        return mm2::Crypto::DeriveKey(
+            inputKey,
+            inputKeySize,
+            reinterpret_cast<const uint8_t*>(kCtx),
+            sizeof(kCtx) - 1U,
+            outputKey,
+            outputKeySize);
     }
 
     bool MemoryEncryption::IsValidKeySize(size_t keySize)
@@ -163,20 +220,20 @@ namespace ZChatIM::mm1::security {
 
     bool MemoryEncryption::EncryptXor(void* ptr, size_t size, const uint8_t* key, size_t keySize)
     {
-        (void)ptr;
-        (void)size;
-        (void)key;
-        (void)keySize;
-        return false;
+        if (!ptr || size == 0 || !key || keySize == 0) {
+            return false;
+        }
+        common::Memory::EncryptMemory(ptr, size, key, keySize);
+        return true;
     }
 
     bool MemoryEncryption::DecryptXor(void* ptr, size_t size, const uint8_t* key, size_t keySize)
     {
-        (void)ptr;
-        (void)size;
-        (void)key;
-        (void)keySize;
-        return false;
+        if (!ptr || size == 0 || !key || keySize == 0) {
+            return false;
+        }
+        common::Memory::DecryptMemory(ptr, size, key, keySize);
+        return true;
     }
 
     // --- SideChannel ---
@@ -189,14 +246,7 @@ namespace ZChatIM::mm1::security {
 
     bool SideChannel::ConstantTimeCompare(const uint8_t* a, const uint8_t* b, size_t size)
     {
-        if (!a || !b) {
-            return false;
-        }
-        unsigned char d = 0;
-        for (size_t i = 0; i < size; ++i) {
-            d |= static_cast<unsigned char>(a[i] ^ b[i]);
-        }
-        return d == 0;
+        return common::Memory::ConstantTimeCompare(a, b, size);
     }
 
     bool SideChannel::ConstantTimeCompare(uint64_t a, uint64_t b)
@@ -214,9 +264,7 @@ namespace ZChatIM::mm1::security {
 
     void SideChannel::SecureZero(void* ptr, size_t size)
     {
-        if (ptr && size) {
-            std::memset(ptr, 0, size);
-        }
+        common::Memory::SecureZero(ptr, size);
     }
 
     void SideChannel::SecureCopy(void* dest, const void* src, size_t size)
@@ -275,7 +323,12 @@ namespace ZChatIM::mm1::security {
 
     bool AntiDebug::IsDebuggerPresent()
     {
+#if defined(_WIN32)
+        return ::IsDebuggerPresent() != FALSE;
+#else
+        // 非 Windows：可接 ptrace / proc；当前保守 false，避免 CI 误报。
         return false;
+#endif
     }
 
     bool AntiDebug::IsHardwareBreakpointPresent()
@@ -369,50 +422,122 @@ namespace ZChatIM::mm1::security {
 
     bool JniSecurity::ValidateCall(const void* jniEnv, const void* jclass)
     {
-        (void)jniEnv;
-        (void)jclass;
-        return false;
+        return ValidateEnvironment(jniEnv) && ValidateClass(jniEnv, jclass);
     }
 
     bool JniSecurity::ValidateEnvironment(const void* jniEnv)
     {
-        (void)jniEnv;
-        return false;
+        return jniEnv != nullptr;
     }
 
     bool JniSecurity::ValidateClass(const void* jniEnv, const void* jclass)
     {
-        (void)jniEnv;
-        (void)jclass;
-        return false;
+        return jniEnv != nullptr && jclass != nullptr;
     }
 
     std::string JniSecurity::StringFromJni(const void* jniEnv, const void* jstring)
     {
+#if defined(ZCHATIM_HAVE_JNI)
+        auto* env = static_cast<JNIEnv*>(const_cast<void*>(jniEnv));
+        auto* js  = static_cast<jstring>(const_cast<void*>(jstring));
+        if (!env || !js) {
+            return {};
+        }
+        if (env->ExceptionCheck()) {
+            return {};
+        }
+        const char* utf = env->GetStringUTFChars(js, nullptr);
+        if (!utf) {
+            return {};
+        }
+        std::string out(utf);
+        env->ReleaseStringUTFChars(js, utf);
+        return out;
+#else
         (void)jniEnv;
         (void)jstring;
         return {};
+#endif
     }
 
     std::vector<uint8_t> JniSecurity::ByteArrayFromJni(const void* jniEnv, const void* jbyteArray)
     {
+#if defined(ZCHATIM_HAVE_JNI)
+        auto* env = static_cast<JNIEnv*>(const_cast<void*>(jniEnv));
+        auto* arr = static_cast<jbyteArray>(const_cast<void*>(jbyteArray));
+        if (!env || !arr) {
+            return {};
+        }
+        if (env->ExceptionCheck()) {
+            return {};
+        }
+        const jsize n = env->GetArrayLength(arr);
+        if (n < 0) {
+            return {};
+        }
+        std::vector<uint8_t> out(static_cast<size_t>(n));
+        if (n > 0) {
+            jbyte* body = env->GetByteArrayElements(arr, nullptr);
+            if (!body) {
+                return {};
+            }
+            std::memcpy(out.data(), body, static_cast<size_t>(n));
+            env->ReleaseByteArrayElements(arr, body, JNI_ABORT);
+        }
+        return out;
+#else
         (void)jniEnv;
         (void)jbyteArray;
         return {};
+#endif
     }
 
     int32_t JniSecurity::IntFromJni(const void* jniEnv, const void* jvalue)
     {
+#if defined(ZCHATIM_HAVE_JNI)
+        auto* env = static_cast<JNIEnv*>(const_cast<void*>(jniEnv));
+        auto* jo  = static_cast<jobject>(const_cast<void*>(jvalue));
+        if (!env || !jo) {
+            return 0;
+        }
+        jclass cls = env->GetObjectClass(jo);
+        if (!cls) {
+            return 0;
+        }
+        jmethodID mid = env->GetMethodID(cls, "intValue", "()I");
+        if (!mid) {
+            return 0;
+        }
+        return env->CallIntMethod(jo, mid);
+#else
         (void)jniEnv;
         (void)jvalue;
         return 0;
+#endif
     }
 
     int64_t JniSecurity::LongFromJni(const void* jniEnv, const void* jvalue)
     {
+#if defined(ZCHATIM_HAVE_JNI)
+        auto* env = static_cast<JNIEnv*>(const_cast<void*>(jniEnv));
+        auto* jo  = static_cast<jobject>(const_cast<void*>(jvalue));
+        if (!env || !jo) {
+            return 0;
+        }
+        jclass cls = env->GetObjectClass(jo);
+        if (!cls) {
+            return 0;
+        }
+        jmethodID mid = env->GetMethodID(cls, "longValue", "()J");
+        if (!mid) {
+            return 0;
+        }
+        return env->CallLongMethod(jo, mid);
+#else
         (void)jniEnv;
         (void)jvalue;
         return 0;
+#endif
     }
 
     void* JniSecurity::AllocateJniMemory(const void* jniEnv, size_t size)
@@ -430,19 +555,43 @@ namespace ZChatIM::mm1::security {
 
     bool JniSecurity::CheckException(const void* jniEnv)
     {
+#if defined(ZCHATIM_HAVE_JNI)
+        auto* env = static_cast<JNIEnv*>(const_cast<void*>(jniEnv));
+        return env != nullptr && env->ExceptionCheck() != JNI_FALSE;
+#else
         (void)jniEnv;
         return false;
+#endif
     }
 
     void JniSecurity::ClearException(const void* jniEnv)
     {
+#if defined(ZCHATIM_HAVE_JNI)
+        auto* env = static_cast<JNIEnv*>(const_cast<void*>(jniEnv));
+        if (env) {
+            env->ExceptionClear();
+        }
+#else
         (void)jniEnv;
+#endif
     }
 
     bool JniSecurity::HandleException(const void* jniEnv)
     {
+#if defined(ZCHATIM_HAVE_JNI)
+        auto* env = static_cast<JNIEnv*>(const_cast<void*>(jniEnv));
+        if (!env) {
+            return false;
+        }
+        if (!env->ExceptionCheck()) {
+            return false;
+        }
+        env->ExceptionClear();
+        return true;
+#else
         (void)jniEnv;
         return false;
+#endif
     }
 
     void JniSecurity::EnableSecurityChecks()
@@ -462,49 +611,81 @@ namespace ZChatIM::mm1::security {
 
     bool JniSecurity::IsValidJniEnv(const void* jniEnv)
     {
-        (void)jniEnv;
-        return false;
+        return jniEnv != nullptr;
     }
 
     bool JniSecurity::IsValidJniClass(const void* jniEnv, const void* jclass)
     {
-        (void)jniEnv;
-        (void)jclass;
-        return false;
+        return jniEnv != nullptr && jclass != nullptr;
     }
 
     // --- KeyManagement ---
     KeyManagement::KeyManagement()  = default;
     KeyManagement::~KeyManagement() = default;
 
+    namespace {
+
+        constexpr size_t kMaxKeyMaterialBytes = 64ULL * 1024ULL * 1024ULL;
+
+        bool vectorAllZero(const std::vector<uint8_t>& v)
+        {
+            for (uint8_t b : v) {
+                if (b != 0) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        std::mutex& secureInt64Mutex()
+        {
+            static std::mutex m;
+            return m;
+        }
+
+        std::mt19937_64& secureInt64Engine()
+        {
+            static std::mt19937_64 eng([]() -> uint64_t {
+                auto b = mm2::Crypto::GenerateSecureRandom(sizeof(uint64_t));
+                uint64_t s = 0;
+                if (b.size() == sizeof(uint64_t)) {
+                    std::memcpy(&s, b.data(), sizeof(s));
+                }
+                return s;
+            }());
+            return eng;
+        }
+
+    } // namespace
+
     std::vector<uint8_t> KeyManagement::GenerateMasterKey()
     {
-        return {};
+        return mm2::Crypto::GenerateSecureRandom(CRYPTO_KEY_SIZE);
     }
 
     std::vector<uint8_t> KeyManagement::GenerateSessionKey()
     {
-        return {};
+        return mm2::Crypto::GenerateSecureRandom(CRYPTO_KEY_SIZE);
     }
 
     std::vector<uint8_t> KeyManagement::GenerateMessageKey()
     {
-        return {};
+        return mm2::Crypto::GenerateSecureRandom(CRYPTO_KEY_SIZE);
     }
 
     std::vector<uint8_t> KeyManagement::GenerateRandomKey(size_t keySize)
     {
-        (void)keySize;
-        return {};
+        if (keySize == 0 || keySize > kMaxKeyMaterialBytes) {
+            return {};
+        }
+        return mm2::Crypto::GenerateSecureRandom(keySize);
     }
 
     std::vector<uint8_t> KeyManagement::DeriveKey(
         const std::vector<uint8_t>& inputKey,
         const std::vector<uint8_t>& salt)
     {
-        (void)inputKey;
-        (void)salt;
-        return {};
+        return DeriveKey(inputKey, salt, CRYPTO_KEY_SIZE);
     }
 
     std::vector<uint8_t> KeyManagement::DeriveKey(
@@ -512,10 +693,23 @@ namespace ZChatIM::mm1::security {
         const std::vector<uint8_t>& salt,
         size_t                      outputKeySize)
     {
-        (void)inputKey;
-        (void)salt;
-        (void)outputKeySize;
-        return {};
+        if (inputKey.empty() || salt.empty() || outputKeySize == 0 || outputKeySize > kMaxKeyMaterialBytes) {
+            return {};
+        }
+        if (!mm2::Crypto::Init()) {
+            return {};
+        }
+        std::vector<uint8_t> out(outputKeySize);
+        if (!mm2::Crypto::DeriveKey(
+                inputKey.data(),
+                inputKey.size(),
+                salt.data(),
+                salt.size(),
+                out.data(),
+                out.size())) {
+            return {};
+        }
+        return out;
     }
 
     bool KeyManagement::StoreMasterKey(const std::vector<uint8_t>& key)
@@ -536,24 +730,26 @@ namespace ZChatIM::mm1::security {
 
     std::vector<uint8_t> KeyManagement::RefreshMasterKey()
     {
-        return {};
+        std::vector<uint8_t> k = GenerateMasterKey();
+        if (!k.empty()) {
+            (void)StoreMasterKey(k);
+        }
+        return k;
     }
 
     std::vector<uint8_t> KeyManagement::RefreshSessionKey()
     {
-        return {};
+        return GenerateSessionKey();
     }
 
     bool KeyManagement::ValidateKey(const std::vector<uint8_t>& key)
     {
-        (void)key;
-        return false;
+        return !key.empty() && IsValidKeySize(key.size());
     }
 
     bool KeyManagement::CheckKeyStrength(const std::vector<uint8_t>& key)
     {
-        (void)key;
-        return false;
+        return ValidateKey(key) && !vectorAllZero(key);
     }
 
     bool KeyManagement::ExportKey(
@@ -583,8 +779,7 @@ namespace ZChatIM::mm1::security {
 
     bool KeyManagement::IsStrongKey(const std::vector<uint8_t>& key)
     {
-        (void)key;
-        return false;
+        return CheckKeyStrength(key);
     }
 
     // --- SecureRandom ---
@@ -597,79 +792,87 @@ namespace ZChatIM::mm1::security {
 
     std::vector<uint8_t> SecureRandom::Generate(size_t size)
     {
-        (void)size;
-        return {};
+        return common::Random::GenerateSecureBytes(size);
     }
 
     bool SecureRandom::Generate(uint8_t* buffer, size_t size)
     {
-        (void)buffer;
-        (void)size;
-        return false;
+        if (!buffer || size == 0) {
+            return false;
+        }
+        const auto v = common::Random::GenerateSecureBytes(size);
+        if (v.size() != size) {
+            return false;
+        }
+        std::memcpy(buffer, v.data(), size);
+        return true;
     }
 
     int32_t SecureRandom::GenerateInt(int32_t min, int32_t max)
     {
-        (void)min;
-        (void)max;
-        return 0;
+        return common::Random::GenerateSecureInt(min, max);
     }
 
     uint32_t SecureRandom::GenerateUInt(uint32_t min, uint32_t max)
     {
-        (void)min;
-        (void)max;
-        return 0;
+        return common::Random::GenerateSecureUInt(min, max);
     }
 
     int64_t SecureRandom::GenerateInt64(int64_t min, int64_t max)
     {
-        (void)min;
-        (void)max;
-        return 0;
+        if (min > max) {
+            return 0;
+        }
+        std::lock_guard<std::mutex> lk(secureInt64Mutex());
+        std::uniform_int_distribution<int64_t> dist(min, max);
+        return dist(secureInt64Engine());
     }
 
     uint64_t SecureRandom::GenerateUInt64(uint64_t min, uint64_t max)
     {
-        (void)min;
-        (void)max;
-        return 0;
+        if (min > max) {
+            return 0;
+        }
+        std::lock_guard<std::mutex> lk(secureInt64Mutex());
+        std::uniform_int_distribution<uint64_t> dist(min, max);
+        return dist(secureInt64Engine());
     }
 
     bool SecureRandom::GenerateBool()
     {
-        return false;
+        const auto v = common::Random::GenerateSecureBytes(1);
+        return !v.empty() && ((v[0] & 1U) != 0);
     }
 
     std::vector<uint8_t> SecureRandom::GenerateMessageId()
     {
-        return {};
+        return common::Random::GenerateMessageId();
     }
 
     std::vector<uint8_t> SecureRandom::GenerateSessionId()
     {
-        return {};
+        return common::Random::GenerateSessionId();
     }
 
     std::string SecureRandom::GenerateFileId()
     {
-        return {};
+        return common::Random::GenerateFileId();
     }
 
     std::string SecureRandom::GenerateRandomString(size_t length)
     {
-        (void)length;
-        return {};
+        return common::Random::GenerateRandomString(length);
     }
 
     bool SecureRandom::CheckQuality()
     {
-        return false;
+        const auto v = common::Random::GenerateSecureBytes(8);
+        return v.size() == 8;
     }
 
     double SecureRandom::GetEntropy()
     {
-        return 0.0;
+        return 8.0;
     }
 
     bool SecureRandom::Initialize()
@@ -690,7 +893,7 @@ namespace ZChatIM::mm1::security {
 
     bool SecureRandom::InitSystemRandom()
     {
-        return false;
+        return CheckQuality();
     }
 
     bool SecureRandom::InitHardwareRandom()

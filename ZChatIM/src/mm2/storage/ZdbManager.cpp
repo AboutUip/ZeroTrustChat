@@ -247,6 +247,10 @@ namespace ZChatIM::mm2 {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_lastError.clear();
+        if (fileId.empty() || !IsSafeZdbFileId(fileId)) {
+            m_lastError = "DeleteFile: invalid fileId";
+            return false;
+        }
         const std::string path = BuildFilePath(fileId);
         auto              it   = m_files.find(fileId);
         if (it != m_files.end()) {
