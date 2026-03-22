@@ -106,14 +106,15 @@ JWT/HMAC 等应由**服务端**签发；客户端将**完整二进制 token**（
 
 | 组件 | 路径 | 说明 |
 |------|------|------|
-| `AuthSessionManager` | `include/mm1/managers/AuthSessionManager.h`、`src/mm1/managers/AuthSessionManager.cpp` | 会话表；**用户 10 次/分钟**、**IP 5 次/分钟**（仅当 `Auth` 传入非空 `clientIp`）；封禁键为 `userId` 或 `userId‖clientIp`；失败计数窗口 **24h**，封禁时长按 **第2.2节 矩阵**；成功清空对应限流队列与封禁项；`VerifySession`/`DestroySession` 移除会话项时对 `userId` 字段做内存清零（Level 2 语义的一部分）。**`ClearAllSessions`**：清空全部会话并对每条做 `userId` 清零，同时清空限流队列与封禁表（**进程内**）。**`VerifyCredential`**：按 **第7.1节** 校验形状与退化情况（**非**服务端密码学证明；真票据须由上层保证不可伪造）。**`JniBridge::EmergencyWipe` / `MM1::EmergencyTrustedZoneWipe`** 会清空会话表（及 **MM1** 其它进程内态，见 **`01-JNI.md`**）。 |
+| `AuthSessionManager` | `include/mm1/managers/AuthSessionManager.h`、`src/mm1/managers/AuthSessionManager.cpp` | 会话表；**用户 10 次/分钟**、**IP 5 次/分钟**（仅当 `Auth` 传入非空 `clientIp`）；封禁键为 `userId` 或 `userId‖clientIp`；失败计数窗口 **24h**，封禁时长按 **第2.2节 矩阵**；成功清空对应限流队列与封禁项；`VerifySession`/`DestroySession` 移除会话项时对 `userId` 字段做内存清零（Level 2 语义的一部分）。**`ClearAllSessions`**：清空全部会话并对每条做 `userId` 清零，同时清空限流队列与封禁表（**进程内**）。**`VerifyCredential`**：按 **第7.1节** 校验形状与退化情况（**非**服务端密码学证明；真票据须由上层保证不可伪造）。**`JniBridge::EmergencyWipe`**、**`MM1::EmergencyTrustedZoneWipe`**、**`SystemControl::EmergencyWipe`**（前两者的 JNI/纯 C++ 编排）会清空会话表（及 **MM1** 其它进程内态，见 **`01-JNI.md`**、**`JniSecurityPolicy.h` 第8节**）。 |
 
 **限流计数语义**：每次进入 `Auth` 且在通过封禁检查后、凭证校验前记入 1 分钟滑动窗口；**含**后续凭证失败（与「每分钟尝试次数」一致）。**例外**：凭证**已通过**但仅因**会话表满**或 **sessionId 随机数生成失败**而拒绝时，会撤销当次已入队的限流计数，避免误伤合法用户（不属于「认证失败」语义）。
 
-### 7.3 与「注册 / 忘记密码」（B1）及初始化顺序
+### 7.3 与「注册 / 忘记密码」（B1/B1b）及初始化顺序
 
 | 项 | 说明 |
 |----|------|
-| **无注册 / 重置密码 JNI** | 开户、找回密码由 **App + HTTPS 业务域**完成；客户端将 **`userId`（16B）** 与服务端签发的 **`token`（≥32B 等，见上表）** 传入 JNI **`auth`**。详述见 **`ZChatIM/docs/JNI-API-Documentation.md` §0.5.1.1**。 |
-| **须先 `Initialize` 再 `Auth`** | **`JniBridge::Auth`** 在桥接 **`m_initialized` 为 false** 时直接返回空会话（**`ZChatIM/src/jni/JniBridge.cpp`**），不会进入 **`AuthSessionManager`**。 |
-| **`LocalAccountCredentialManager`** | 仓库内存在本地口令相关 C++，**当前未**接入 **`JniInterface`**；**不**改变「B1 = 业务 HTTPS + `auth`」的 JNI 边界。 |
+| **服务端开户 / 票据登录（B1）** | 账号创建、风控、人机验证等由 **App + 网关（ZSP 编排 / SpringBoot 业务，非 HTTPS 必选）**完成；客户端取得 **`userId`（16B）** 与服务端签发的 **`token`（≥32B 等，见上表）** 后，调用 JNI **`auth`** 建立 native 会话。传输上走 **ZSP**（见 **`docs/01-Architecture/02-ZSP-Protocol.md` 第十节**），**不要**在文档中默认「必须先 HTTPS」。详述见 **`ZChatIM/docs/JNI-API-Documentation.md` 第0.6节**。 |
+| **本地口令注册 / 登录（B1b）** | **`RegisterLocalUser` / `AuthWithLocalPassword` / `HasLocalPassword` / `ChangeLocalPassword` / `ResetLocalPasswordWithRecovery`** 已接入 **`JniInterface` / `JniNatives`**（见 **`docs/06-Appendix/01-JNI.md` 一.1**），落 **`mm1_user_kv`**（**LPH1/LRC1**），须 **`Initialize` 成功且 MM2 已打开**。与 B1 **并存**：产品可选用「仅服务端 token」「仅本地口令」或二者组合（例如先本地注册再绑定服务端账号）。 |
+| **须先 `Initialize` 再 `Auth` / 本地口令登录** | **`JniBridge::Auth`**（及 **`AuthWithLocalPassword`** 路径）在桥接 **`m_initialized` 为 false** 时失败或短路（**`ZChatIM/src/jni/JniBridge.cpp`**）。 |
+| **`LocalAccountCredentialManager`** | **`MM1`** 门面 **`GetLocalAccountCredentialManager()`**；由 **`JniBridge`** 路由，与 **`02-Auth.md`** 限流/封禁语义一致。 |

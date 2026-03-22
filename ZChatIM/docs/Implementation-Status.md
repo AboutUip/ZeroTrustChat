@@ -1,38 +1,26 @@
-# ZChatIM C++ 实现状态（活文档）
+# ZChatIM C++ 实现跟踪
 
-**作用**：对照 **`ZChatIM/include/`** 与 **`ZChatIM/src/`**，记录「已实现 / 桩 / 未接」，避免头文件扩张与文档漂移。  
-**维护**：完成功能或删改 API 时顺手改本页对应行；详细行为仍以 **`03-Storage.md`**、**`04-ZdbBinaryLayout.md`**、**`MM2.h`** 与源码为准。**章节引用**与 **`docs/README.md` 第5节**一致：统一 **「第×节 / 第×条」**，不用西文章节号。  
-**持久化**：**凡新增/扩展 SQLite、`.zdb` 写入**须对照 **`docs/README.md` 第2节** 与根 **`README`**——**持久化从严**；**能内存则内存**。  
-**文档冲突**：凡 **`04-Features` / 总览** 与「消息是否落盘、重启是否丢」矛盾时，**先读** **`docs/README.md`**「**冲突与权威**」，**再以本页 + 第8节 为准**。  
-**「彻底搞定 C++」迭代范围**：见 **`docs/07-Engineering/02-Cpp-Completion-Roadmap.md`**（**M0–M3**；与 **`01-MM1.md` 愿景**区分）。
+记录 `ZChatIM/include/`、`ZChatIM/src/` 与 `CMakeLists.txt` 对照下的模块状态与风险。运行行为以源码为准；存储语义以 [`docs/02-Core/03-Storage.md`](../../docs/02-Core/03-Storage.md) 第七节为准。新增持久化须符合 [`docs/AUTHORITY.md`](../../docs/AUTHORITY.md)。阶段与非交付项见 [`Scope.md`](Scope.md)。与「IM 是否落盘」等叙述冲突时：先 [`AUTHORITY.md`](../../docs/AUTHORITY.md)，再本文第8节。
 
-**本版本（当前迭代）交付口径 — 就按这个结案**：以 **`ZChatIM --test` 全绿** + 本页 **第7节（P0/P1/P2）勾选** + **`01-MM1.md` 一点五.3（M3 非本期 C++ 义务）** 为 **C++ 侧发版边界**。**不**在本版本实现 **M3 协议栈**（双棘轮、Random Allocator 愿景模型等）；若产品改口径须新开版本并改 **`05` / 一点五.3**。  
-**安全子模块（`SideChannel` / `SecurityMemory`）**：**`MM1_security_submodules.cpp`** 已强化——**`SecurityMemory::Lock/Unlock`** 与 **`IsLocked`**（区间须落在登记范围内）、**`Free`/`Reallocate` 释放跟踪锁**、**`ReleaseAllLockTracking`**（**`EmergencyTrustedZoneWipe`** 调用）；**`SideChannel`**：**有界 `AntiTimingDelay`**、**CSPRNG `RandomDelay`**、**`FlushCache`**（**x86** 尽力 **`CLFLUSH`** + 栅栏 + _scratch 读穿透）、**`PreventCacheSideChannel`**。**非魔法**：不保证抵御全部微架构侧信道；**热路径比对**仍以 **`common::Memory::ConstantTimeCompare`** / **OpenSSL** 为准（**`01-MM1.md` 一点五.2 第七节**）。
+**交付**：`ZChatIM --test` 通过；本文第7节；[`01-MM1.md`](../../docs/02-Core/01-MM1.md) 一点五.3。**SideChannel / SecurityMemory**（`MM1_security_submodules.cpp`）：实现见源码与 [`01-MM1.md`](../../docs/02-Core/01-MM1.md) 一点五.2；不宣称覆盖全部微架构侧信道；敏感比对以 `ConstantTimeCompare` 与 OpenSSL 为准。
 
-### 如何阅读（约 1 分钟）
-
-1. **存储与 `.zdb`**：看 **第2.1节 容器 / 元数据** + **`03-Storage.md` 第七节** + **`04-ZdbBinaryLayout.md`**。  
-2. **哪些 API 已能调用**：看 **第2.1节 编排**；**MM2 行为细则与边界**：看 **第2.2节**；**MM2 是否依赖 `common` 工具**：看 **第2.4节**；**JNI / MM1 进度**：看 **第4节**、**第3节**、**第7节**。  
-3. **失败与并发**：看 **第8节**（部分失败路径、锁、`MessageQueryManager`）。  
-4. **JNI / Java**：**第4节**（**`RegisterNatives` + `ZChatIMNative.java`** 已接 **`JniInterface`/`JniBridge`**）；契约以 **`docs/06-Appendix/01-JNI.md`** + **`JniInterface.h`** 为准。  
-5. **下一步做啥**：**第7节 勾选清单**。
+**阅读路径**：存储—第2.1节、Storage 第七节、[`04-ZdbBinaryLayout.md`](../../docs/02-Core/04-ZdbBinaryLayout.md)；API—第2～4节、第7节；失败与锁—第8节；JNI—第4节、[`01-JNI.md`](../../docs/06-Appendix/01-JNI.md)、`JniInterface.h`。
 
 ---
 
 ## 1. 构建产物
 
-（与 **`ZChatIM/CMakeLists.txt`** **`add_library` / `add_executable`** 显式列表 **一字对齐**；不用目录通配符概括。）
+（与 `ZChatIM/CMakeLists.txt` 中 `add_library` / `add_executable` / `target_sources` 显式列表一致。）
 
 | 目标 | 说明 |
 |------|------|
-| **`sqlite3`**（静态库） | **仅当 `ZCHATIM_USE_SQLCIPHER=OFF`**：**`thirdparty/sqlite/sqlite3.c`**（**C99**），**`target_link_libraries(ZChatIMCore PRIVATE sqlite3)`**。 |
-| **SQLCipher** | **默认 `ZCHATIM_USE_SQLCIPHER=ON`**：树内 **`sqlite3.c` + `sqlite3.h`**（**默认目录** **`thirdparty/sqlcipher/`**；**Windows** 若存在 **`prebuilt/windows-x64/amalgamation/`** 则**优先**）→ **`add_library(zchatim_sqlcipher STATIC …)`**（**无 vcpkg**）。**不**与明文 **`thirdparty/sqlite/sqlite3.c`** 同时用于元数据。 |
-| **`ZChatIMCore`**（静态库） | **37**（**`APPLE` 目标 +1：`src/mm2/MM2_message_key_darwin.cpp` → 共 38**；以 **`CMakeLists.txt`** **`target_sources(ZChatIMCore …)`** 为准）个 **`.cpp`**（**全 C++**）：**`src/common/`** — `Utils.cpp`、`Ed25519.cpp`（**OpenSSL 3 EVP**）、`Memory.cpp`、`String.cpp`、`File.cpp`、`Time.cpp`、`Random.cpp`、`Logger.cpp`；**`src/mm1/`** — `MM1.cpp`、`MM1_security_submodules.cpp`、`managers/AuthSessionManager.cpp`、`managers/MessageReplyManager.cpp`、`managers/MessageRecallManager.cpp`、`managers/UserDataManager.cpp`、**`managers/FriendManager.cpp`**、**`managers/FriendVerificationManager.cpp`**、**`managers/GroupManager.cpp`**、**`managers/GroupNameManager.cpp`**、**`managers/GroupMuteManager.cpp`**、**`managers/MessageEditManager.cpp`**（含 **`MessageEditOrchestration::EditMessage`**）、**`managers/MentionPermissionManager.cpp`**、**`managers/FriendNoteManager.cpp`**、**`managers/AccountDeleteManager.cpp`**、`managers/MM1_manager_stubs.cpp`、`managers/SessionActivityManager.cpp`；**`src/jni/`** — `JniBridge.cpp`、`JniInterface.cpp`；**`src/mm2/`** — `MM2.cpp`、**`MM2_message_key_passphrase.cpp`（ZMKP v1）**；**`src/mm2/crypto/`** — `Sha256.cpp`；**`src/mm2/storage/`** — `Crypto.cpp`、`BlockIndex.cpp`、`MessageQueryManager.cpp`、`SqliteMetadataDb.cpp`、`StorageIntegrityManager.cpp`、`ZdbFile.cpp`、`ZdbManager.cpp`。**`target_compile_definitions`**：**`ZCHATIM_USE_SQLCIPHER=1`**、**`SQLITE_HAS_CODEC=1`**（**`sqlite3_key_v2`** 等 API 在 **`SqliteMetadataDb.cpp`** 含 **`sqlite3.h`** 时可见）。**`target_link_libraries`**：**`PUBLIC`** **`OpenSSL::Crypto`**；**元数据 SQLite** **`PRIVATE`** **`sqlite3` / `zchatim_sqlcipher`**；**Windows** **`PUBLIC`** **`crypt32`**（**DPAPI**）。 |
-| **`ZChatIM.exe`** | **`ZCHATIM_BUILD_EXE=ON`**（默认）时生成。**源**：**`main.cpp`**；**`ZCHATIM_BUILD_TESTS=ON`**（默认）时追加 **`tests/*.cpp`**。**`PRIVATE` 链接** **`ZChatIMCore`**。**OFF** 时不创建该可执行目标。 |
-| **`ZChatIMJNI`**（可选） | **`ZCHATIM_BUILD_JNI=ON`**（默认）且 **`find_package(JNI)`** 或 **`JAVA_HOME`** 兜底成功时生成。**源**：**`jni/ZChatIMJNI.cpp`**（**`JNI_OnLoad`** 调 **`zchatim_RegisterNatives`**）、**`jni/JniNatives.cpp`**（**`RegisterNatives`** → **`JniInterface`**，类 **`com.yhj.zchat.jni.ZChatIMNative`**）。**`PRIVATE` 链接** **`ZChatIMCore`**。Java 侧：**`ZChatServer/.../com/yhj/zchat/jni/ZChatIMNative.java`**。 |
+| `sqlite3` | 仅 `ZCHATIM_USE_SQLCIPHER=OFF`：`thirdparty/sqlite/sqlite3.c`（C99），`PRIVATE` 链入 `ZChatIMCore`。 |
+| `zchatim_sqlcipher` | 默认 ON：树内 `thirdparty/sqlcipher/`（Windows 可优先 `prebuilt/.../amalgamation/`）。不与明文 sqlite 混用于元数据。 |
+| `ZChatIMCore` | 源以 `target_sources(ZChatIMCore …)` 为准（约 37 个 `.cpp`，Apple +1）。目录：`src/common/`、`src/mm1/`（含 managers）、`src/jni/`、`src/mm2/`（含 `storage/`、`crypto/`）。定义：`ZCHATIM_USE_SQLCIPHER`、`SQLITE_HAS_CODEC`。链接：`PUBLIC OpenSSL::Crypto`；元数据 `PRIVATE sqlite3` 或 `zchatim_sqlcipher`；Windows `PUBLIC crypt32`。 |
+| `ZChatIM.exe` | 默认 ON：`main.cpp`；`ZCHATIM_BUILD_TESTS=ON` 时并入 `tests/*.cpp`，链 `ZChatIMCore`。 |
+| `ZChatIMJNI` | 默认 ON 且 JNI 可用：`jni/ZChatIMJNI.cpp`、`JniNatives.cpp`→`ZChatIMNative.java`。 |
 
-**树内自检**：**`ZCHATIM_BUILD_TESTS=ON`**（默认）时支持 **`--test*`**；Ed25519 块需 **`__has_include(<openssl/evp.h>)`**（与生产均为 **OpenSSL**）。见 **`docs/07-Engineering/01-Build-ZChatIM.md` 第7节**。  
-**树内测试入口**：**`ZChatIM.exe --test`** 跑全量（含 **`RunCommonToolsTests`**、MM1/MM2 各 **`[CASE]`**、**原 minimal 场景**（**`RunMinimalScenarioTestCasesMerged`**：文件分片 / CompleteFile / 消息批处理与回滚 / 已读等）、**`tests/mm2_fifty_scenarios_test.cpp`**、**`tests/jni_im_smoke_test.cpp`**）。其中 **JNI IM 冒烟**不经 JVM，直接 **`JniInterface`**：**消息** + **UserData** +（**OpenSSL 可见时）**好友 **Send/Respond/GetFriends/Delete**（**`FriendManager` / `FriendVerificationManager`**）。
+**测试**：`--test` / `--test-im-1k` 见 [`Build.md`](Build.md) 第7节。全量含 common、MM1/MM2、minimal 合并场景、MM2-50、JNI IM smoke、本地账户+RTC。
 
 ---
 
@@ -42,13 +30,13 @@
 
 | 组件 | 头文件 | 源文件 | 状态 |
 |------|--------|--------|------|
-| 编排 | `mm2/MM2.h` | `MM2.cpp` | **核心路径**：`Initialize`（**`SqliteMetadataDb::InitializeSchema`（**v11**）→ `StorageIntegrityManager::Bind` → `ImRamClearUnlocked()` → `m_initialized=true` → `MessageQueryManager::SetOwner(this)`**）、`StoreFileChunk`/`GetFileChunk`、**`CompleteFile`/`CancelFile`/续传索引**、`Cleanup`/`CleanupAllData`、`GetStorageStatus`；**IM**：**`StoreMessage`/`StoreMessages`/`RetrieveMessage`/`RetrieveMessages`/`GetSessionMessages`/`DeleteMessage`** 与 **`GetMessageQueryManager()::ListMessages*`**（**AES-GCM**；**OpenSSL 3**；**仅 RAM / ImRam**）；**`MarkMessageRead`/`GetUnreadSessionMessages`**；**`StoreMessageReplyRelation`/`GetMessageReplyRelation`**、**`EditMessage`/`GetMessageEditState`**、**`CleanupSessionMessages`**；**`StoreFriendRequest`/`UpdateFriendRequestStatus`/`DeleteFriendRequest`/`CleanupExpiredFriendRequests`**；**`CreateGroupSeedForMm1`/`UpsertGroupMemberForMm1`/`DeleteGroupMemberForMm1`/`ListGroupMemberUserIdsForMm1`/`GetGroupMemberRoleForMm1`/`GetGroupMemberExistsForMm1`/`UpsertGroupKeyEnvelopeForMm1`/`TryGetGroupKeyEnvelopeForMm1`**（**MM1 `GroupManager`**）；**`SeedAcceptedFriendshipForSelfTest`**（**自测注入**；符号在**正式库亦存在**，**禁止 JNI** 接线，见 **`JniSecurityPolicy.h`**）+ **`UpdateGroupName`/`GetGroupName`**（**`mm2_group_display`**；**`UpdateGroupName`** 经 **MM1 `GroupNameManager`**）；**`CleanupExpiredData`**（当前主要清过期 **pending** 好友请求）、**`OptimizeStorage`**（**`VACUUM`**）；**`GetMessageCount`**→**进程内 IM RAM 条数**（**非** SQLite **`im_messages`** 热路径）；**`ZCHATIM_USE_SQLCIPHER`**（默认 ON）时 **`Initialize`** 内 **`Crypto::Init`** + **`mm2_message_key.bin`** + **`SqliteMetadataDb::Open(…, key)`**；**否则** **`Crypto`/密钥** 仍 **懒加载**至 **`EnsureMessageCryptoReadyUnlocked`**（见 **`03-Storage.md` 第七节**）。 |
-| 元数据 | `mm2/storage/SqliteMetadataDb.h` | `SqliteMetadataDb.cpp` | **完成**：**默认 SQLCipher**（**`Open(path,key32)`**、**`03-Storage.md` 第4.2节 PRAGMA**、**明文 SQLite → `sqlcipher_export` 迁移**）；**`InitializeSchema`**：**当前 schema + `PRAGMA user_version=11`**（含 **`mm1_device_sessions` / `mm1_im_session_activity` / `mm1_cert_pin_*` / `mm1_user_status` / `mm1_mention_atall_window`**），**不建** **`im_messages` / `im_message_reply`**（**无** IM 相关迁移/单测建表分支）。**`ZCHATIM_USE_SQLCIPHER=OFF`** 时为 **vanilla `sqlite3.c`** + **`Open(path)`**。 |
+| 编排 | `mm2/MM2.h` | `MM2.cpp` | `Initialize`：schema v11、`ImRam`、绑定 `MessageQueryManager`；IM 仅 RAM（无 `im_messages` 表）；文件/群/ZGK1/友链/编辑/回复/已读/续传/ZMKP/SQLCipher 等见 [`03-Storage.md`](../../docs/02-Core/03-Storage.md) 第七节与源码。`SeedAcceptedFriendshipForSelfTest` 禁止接 JNI（`JniSecurityPolicy.h`）。 |
+| 元数据 | `mm2/storage/SqliteMetadataDb.h` | `SqliteMetadataDb.cpp` | SQLCipher 默认；`user_version=11`；v11 表含设备/会话活跃/Pin/在线/@ALL 窗等；无 IM 消息表。PRAGMA 与迁移见 Storage 第4.2节。OFF 时用 vanilla sqlite。 |
 | 完整性 | `mm2/storage/StorageIntegrityManager.h` | `StorageIntegrityManager.cpp` | **完成**：SHA-256 + 与 SQLite 联动。 |
 | 容器 | **`mm2/storage/ZdbFile.h`**、**`mm2/storage/ZdbManager.h`** | **`ZdbFile.cpp`**、**`ZdbManager.cpp`** | **完成**：v1 布局、**`Create` 随机预填 payload**、`AppendRaw`/读写/删除等（见 **`04-ZdbBinaryLayout.md`**）。 |
 | 加密 | `mm2/storage/Crypto.h` | `Crypto.cpp` | **全平台 OpenSSL 3**（AES-GCM、PBKDF2、**`RAND_bytes`**；**Unix** 可再读 **`/dev/urandom`**）。**`Encrypt* / Decrypt* / DeriveKey`** 须 **`Init`**；**`GenerateSecureRandom` / `HashSha256`** 不依赖 **`s_initialized`**。**`GenerateSecureRandom`**：两轮 **`RAND_bytes`**（间 **`RAND_poll`**）+ Unix **`ReadDevUrandom`** 仍失败则返回**空向量**（**`ZdbFile::Create`** 等据此失败）。 |
 | 哈希 | `mm2/crypto/Sha256.h` | `Sha256.cpp` | **OpenSSL 3** **`EVP_sha256`**（**`Sha256` / `Sha256Hasher`**）。 |
-| 其它存储辅助 | **`mm2/storage/BlockIndex.h`**、**`mm2/storage/MessageQueryManager.h`** | **`BlockIndex.cpp`**、**`MessageQueryManager.cpp`** | **`BlockIndex`**：仍为**桩**；**文件块索引由 `SqliteMetadataDb`/`data_blocks` 承担**，**`MM2` 不嵌入 `BlockIndex` 成员**。**`MessageQueryManager`**：**`SetOwner(this)`** 在 **`MM2::Initialize`** 成功路径末尾（**`m_initialized = true` 之后**）；**`SetOwner(nullptr)`** 在 **`MM2::CleanupUnlocked`**。**`List*`** 均经 **`MM2` 持锁** 走 **RAM IM 索引**（**`ImRamListIds*Unlocked`** + **`RetrieveMessage`**），**不**读 SQLite **`im_messages`**。返回行编码见 **`MessageQueryManager.h`**。 |
+| 其它存储辅助 | `mm2/storage/BlockIndex.h`、`MessageQueryManager.h` | `BlockIndex.cpp`、`MessageQueryManager.cpp` | `BlockIndex` 桩；块索引用 `data_blocks`。`MessageQueryManager` 在 `Initialize` 末尾 `SetOwner`；`List*` 走 RAM IM，编码见 `MessageQueryManager.h`。 |
 
 ### 2.2 `MM2` 扩展语义备忘（非「未实现」清单）
 
@@ -83,6 +71,8 @@
 | 组件 | 状态 |
 |------|------|
 | **`AuthSessionManager`** | **已实现**（`src/mm1/managers/AuthSessionManager.cpp`）：**`Auth`/`VerifySession`/`DestroySession`** + **`TryGetSessionUserId(sessionId, out)`** + **`ClearAllSessions`**（会话清零 + 限流/封禁表清空）；**`VerifyCredential`** 按 **`Types::AUTH_OPAQUE_CREDENTIAL_MIN_BYTES`（32）** 等规则（见 **`02-Auth.md` 第7.1节**）。**`EmergencyTrustedZoneWipe` / `JniBridge::EmergencyWipe`** 内经由 **`MM1::ClearAllAuthSessions()`** 清空会话。 |
+| **`LocalAccountCredentialManager`** | **已实现**（**`LocalAccountCredentialManager.cpp`**）：**`RegisterLocalUser` / `AuthWithLocalPassword` / `HasLocalPassword` / `ChangeLocalPassword` / `ResetLocalPasswordWithRecovery`** → **`mm1_user_kv`**（**LPH1/LRC1**）；**`JniBridge`** 已路由（**`01-JNI.md` 一.1**）。须 **MM2 已 `Initialize`**。 |
+| **`RtcCallSessionManager` 与呼叫门面** | **已实现**：**JNI `RtcStartCall` 等**（**`01-JNI.md` 一.2**）；**`VoiceVideoCallManager` / `RtcCallManager` / `MediaCallCoordinator`** 委托同一 **`RtcCallSessionManager`**（**`MM1::Initialize`** 内 **`AttachRtcSessionManager`**）。**ZSP 信令**对齐见 **`02-ZSP-Protocol.md` 第6.6节**（**`CALL_SIGNAL`**）。 |
 | **`SessionActivityManager`** | **已实现**（`src/mm1/managers/SessionActivityManager.cpp`）：**`TouchSession` / `CleanupExpiredSessions`** 等委托 **`MM2::Mm1*ImSessionActivity*`** → **`mm1_im_session_activity`**（**`user_version=11`**；**进程重启可恢复**，须 **`MM2::Initialize`**）。 |
 | **`MessageReplyManager`** | **已实现**（`src/mm1/managers/MessageReplyManager.cpp`）：**`callerSessionId`** → **`TryGetSessionUserId`**，principal **必须**与 **`senderId`** 一致（**`common::Memory::ConstantTimeCompare`**）；**`senderEd25519PublicKey`（32B）** + **canonical payload** 上 **Ed25519 验签**；通过后 **`mm2::MM2::StoreMessageReplyRelation`**。**群会话**：**`MM2`** 内若 **`imSessionId`** 在 **`group_members`** 有行，则 **SQL** 校验 **回复作者** 与 **`repliedSenderId`** 均为成员；**单聊**（无群行）不触发该校验。 |
 | **`MessageRecallManager`** | **已实现**（`MessageRecallManager.cpp`）：**Ed25519** 验签（canonical **`ZChatIM|RecallMessage|v1`**）+ **`UserDataManager`** 中 **`senderId`→32B 公钥**（类型常量见源码）；通过后 **`MM2::DeleteMessage`**。 |
@@ -95,7 +85,7 @@
 | **`MentionPermissionManager`** | **已实现**（**`MentionPermissionManager.cpp`**）：验签（**`ZChatIM|MentionRequest|v1`** ‖ **`groupId`‖`senderId`‖`mentionType` i32BE‖`nowMs` u64BE‖`mentionedUserIds`…**）；**mentionType=1** 校验 **@用户** 均在群（**`MM2` → `group_members` SQL**）；**=2 @ALL** 须 **owner/admin**（**SQL 角色**），且 **60s** 滑动窗内 **≤3 次**（**`mm1_mention_atall_window`** + **`RecordMentionAtAllUsage`**；**重启可恢复**）。 |
 | **`FriendNoteManager`** | **已实现**（**`FriendNoteManager.cpp`**）：验签（**`ZChatIM|UpdateFriendNote|v1`** ‖ **`userId`‖`friendId`‖`updateTimestamp` u64BE‖** **`SHA-256(note)`**）；须 **accepted 好友**；**`mm1_user_kv`** **`type=0x464E424E`（'FNBN'）** 打包多好友备注（**`ZFN1`** 前缀，见源码）。单条备注 **≤64KiB**。 |
 | **`AccountDeleteManager`** | **已实现**（**`AccountDeleteManager.cpp`**）：**`reauthToken` 与 `secondConfirmToken` 须同长 ≥16B 且逐字节相同**；写 **`mm1_user_kv` `type=0x41434431`（'ACD1'）** 墓碑；**不**自动 **`CleanupAllData`**。 |
-| **`MM1_manager_stubs.cpp`** | **`SystemControl`**：**`EmergencyWipe` → `MM1::EmergencyTrustedZoneWipe`**；**`GetStatus` / `RotateKeys`** 同上。**`DeviceSessionManager`** / **`CertPinningManager`** / **`UserStatusManager`**：委托 **`MM2` → `SqliteMetadataDb`**（**`mm1_device_sessions` / `mm1_cert_pin_*` / `mm1_user_status`**），**进程重启可恢复**（须 **`MM2::Initialize`**；**在线态**为**最后已知**缓存，**服务端**权威）。**`SessionActivityManager`**：**`mm1_im_session_activity`** 持久化。 |
+| **`MM1_manager_stubs.cpp`** | **`SystemControl`**：**`EmergencyWipe` → `MM1::EmergencyTrustedZoneWipe`** → **`JniBridge::NotifyExternalTrustedZoneWipeHandled`**；**`GetStatus` / `RotateKeys`** 同上。**`DeviceSessionManager`** / **`CertPinningManager`** / **`UserStatusManager`**：委托 **`MM2` → `SqliteMetadataDb`**（**`mm1_device_sessions` / `mm1_cert_pin_*` / `mm1_user_status`**），**进程重启可恢复**（须 **`MM2::Initialize`**；**在线态**为**最后已知**缓存，**服务端**权威）。**`SessionActivityManager`**：**`mm1_im_session_activity`** 持久化。 |
 | **`JniBridge` / `JniInterface`** | **已实现**（**`src/jni/JniBridge.cpp`**、**`JniInterface.cpp`**）：**`Initialize(dataDir,indexDir)`**、会话绑定、**MM2/MM1** 路由（见 **`01-JNI.md`**）。 |
 | **`MM1.h` / `MM1.cpp`** | **`Initialize`** / **`Cleanup`** / 内存与密钥门面同前；**`ValidateJniCall`/`JniStringToString`/`JniByteArrayToVector`** → **`JniSecurity`**（**`ZCHATIM_HAVE_JNI`** 时 **UTF-8 / jbyteArray** 等真实转换；否则空/指针守卫）；**`IsDebuggerPresent`/`EnableAntiDebug`** → **`AntiDebug`**（**Windows**：**`::IsDebuggerPresent`**）。**`Get*()`** 引用并发注意同前。 |
 | **`MM1_security_submodules.cpp`** | **`SecurityMemory`**、**`MemoryEncryption`**、**`KeyManagement`**、**`SecureRandom`**、**`SideChannel`**（**延时/缓存类 API** 仍多为空操作；**`ConstantTimeCompare(uint64_t)`** 委托 **`common::Memory`**）；**`AntiDebug::IsDebuggerPresent`**（Win）；**`JniSecurity`**：**`ZCHATIM_HAVE_JNI`** 时 **String/ByteArray/Exception/Integer/Long** 等；**`AllocateJniMemory`/`FreeJniMemory`** 委托 **`common::Memory`**（**`SecureZero` 后返回**）。 |
@@ -113,11 +103,11 @@
 | **`jni/ZChatIMJNI.cpp` + `jni/JniNatives.cpp`** | **`JNI_OnLoad`** 注册 **`com.yhj.zchat.jni.ZChatIMNative`** 全部 **`native`** → **`JniInterface`**（与 **`01-JNI.md`** / **`JniInterface.h`** 同序）。 |
 | **`include/jni/*.h` + `src/jni/*.cpp`** | **`JniBridge`/`JniInterface` 已实现**；Java 对照 **`ZChatServer/.../ZChatIMNative.java`**。 |
 | **`include/common/JniSecurityPolicy.h`** | 策略常量/约定；**`mm2/MM2.h` 已包含**；**与 native 实现同步靠人工**。MM2 与其余 **`common/*` 工具**关系见 **第2.4节**。 |
-| **`include/common/{Utils,Memory,String,File,Time,Random}.h`** | 对应 **`src/common/{Utils,Memory,String,File,Time,Random}.cpp`**，命名空间 **`ZChatIM::common`**（与 **`Logger`** 分列，均上表 **`ZChatIMCore`**）。**`Memory`**：匿名命名空间内 **`std::atomic<size_t>`** 的 **`g_allocatedSize` / `g_peakMemoryUsage`**；**`GetAllocatedSize`/`GetPeakMemoryUsage`/`ResetMemoryStats`** 与 **`Allocate`/`Free`/`Reallocate`** 一致；**`AllocateAligned`/`FreeAligned`** **不计入**上述统计（见 **`Memory.h`** 注释）。**`Random.cpp`**：**`ReadOsRandom`** → **`RAND_bytes`**；**Unix** **`g_urandomMutex` + `g_urandomFd`** 读 **`/dev/urandom`**；**`g_rngSeeded`（`std::atomic<bool>`）+ `g_rngMutex` + `g_mt`（`mt19937`）** 惰性播种（**无** `Random` 类静态 **`s_initialized`**；**勿与** **`ZChatIM::mm2::Crypto::s_initialized`** 混淆）。**`GenerateBytes`/`GenerateSecureBytes`/`GenerateRandomString`** 对 **`length`** 有**实现上限**（防 OOM，见 **`Random.h`** / **`Random.cpp`**）。**`GenerateBytes`/`GenerateInt`/`GenerateUInt`/`GenerateBool`**：**`mt19937`**（**非** CSPRNG）。**`GenerateSecureBytes`** / **`GenerateMessageId`** / **`GenerateSessionId`**：仅 **`ReadOsRandom`**；失败返回**空向量**。**`GenerateSecureInt`/`GenerateSecureUInt`**：**`ReadUniformIndex`**；失败返回 **`min`**。**`GenerateFileId`/`GenerateRandomString`**：**`FillStringUniformAlpha62`** 仅用 **`ReadUniformIndex`**；失败返回**空串**（**不**回退 **`uniform_int_distribution` + `g_mt`**）。**`File::ReadFile`** 校验 **`read` 完整读满**；**`WriteFile`/`AppendFile`** 拒绝 **`length` 超过 `std::streamsize` 可表示范围**。**`File::ListDirectory(path, out, ec)`**：**`directory_iterator` + `increment(ec)`**；**`true` 且 `ec` 清零**＝成功（**`out` 空**＝空目录）；**`false`**＝打开或遍历失败。 |
+| `include/common/{Utils,Memory,String,File,Time,Random}.h` | 对应 `src/common/*.cpp`，命名空间 `ZChatIM::common`。边界与统计、RNG 分层（`Random` 的 `mt19937` vs `GenerateSecure*`）、`File` 读写与目录枚举语义以各头文件与实现为准。**勿与** `mm2::Crypto::s_initialized` 混淆。 |
 | **`mm2/storage/Crypto.cpp`**（**`Crypto::Init`/`Cleanup`**） | **`g_cryptoInitMutex`**：**`Init` 双检 + 互斥**、**`Cleanup` 同锁**，与 MM2 单线程 API 形成**纵深防御**；**`EncryptMessage`/`DecryptMessage`（Windows）** 在 **`plaintextLen`/`ciphertextLen` 超过 `ULONG` 可表示范围** 时 **`false`**。**`ReadDevUrandom`（非 Windows）** 校验 **`read` 读满** 且 **`len` 不超过 `std::streamsize` 上限**。 |
 | **`Logger.h`**（`include/` 根） | **实现** **`src/common/Logger.cpp`**（命名空间 **`ZChatIM`**），已编入 **`ZChatIMCore`**。**`m_logLevel`**：**`std::atomic`**；**`m_logFile`** 与 **`Log*`** 共用 **`mutex`**（含 **`SetLogFile` / `CloseLogFile` / 析构**）。**`SetLogFile`**：**`filePath` 为空** 时 **`false`**。 |
 
-**边界健壮性（与 `Utils.h` / `Memory.h` 注释及实现对齐）**：**`Utils`** — **`length>0` 且 `data==nullptr`** 时 **`BytesToHex`/`BytesToString` 返回空串**；**`BytesToHex`** 在 **`length*2` 溢出 `size_t`** 时返回**空串**；**`BytesToString`** 在 **`length` 超过 `std::string::max_size()`** 时返回**空串**；**`HexToBytes`** 在**需写出字节数 `>0` 且 `output==nullptr`** 时 **`false`**；**`CalculateCRC32`/`CalculateAdler32`** 在 **`length>0` 且 `data==nullptr`** 时返回 **0**（**合法空缓冲的 Adler32 为 1**）。**`Memory`** — **`Allocate`/`Reallocate`** 在 **`size`（或 `newSize`）+ `sizeof(size_t)` 头** **`size_t` 溢出** 时 **`nullptr`**（**`Reallocate` 失败时原块不变**）。
+**边界**：`Utils`/`Memory` 对空指针、溢出、`nullptr` 输出缓冲等约定见 `Utils.h`、`Memory.h`。
 
 ---
 
@@ -144,37 +134,34 @@
 
 ### 7.1 当前迭代（进行中）
 
-- **M1 集成联测**：**阻塞** — **Android 客户端**与 **Spring Boot** **未就绪**，**暂不**做端到端联测；**回归**以 **`ZChatIM --test`** 为准。解禁后按 **`docs/07-Engineering/02-Cpp-Completion-Roadmap.md` 第3节** 补「产品场景 + 含重启」验收。
-- **M2 最小落地**：**不依赖联测**；对照 **`docs/07-Engineering/03-M2-Minimal-ServerOwnedDevices.md`** + **`03-Storage.md` 第4.2 / 4.3节**（服务端设备权威、本地元表语义）。
-- **M3（双棘轮等愿景）**：**独立立项**，范围见 **`01-MM1.md` 一点五.3** 与 **`02-Cpp-Completion-Roadmap.md` 第5节**；**非**本迭代交付义务。
+- **M1 集成联测**：**Android** + **Spring Boot** 未就绪前不做端到端；回归 **`ZChatIM --test`**。解禁后验收项见 **`Scope.md`**。  
+- **M2**：对照 **`Scope.md`** + **[`docs/02-Core/03-Storage.md`](../../docs/02-Core/03-Storage.md) 第4.2 / 4.3节**。  
+- **M3**：**[`docs/02-Core/01-MM1.md`](../../docs/02-Core/01-MM1.md) 一点五.3**、**`Scope.md`**；非本迭代义务。
 
 ### 7.2 P0 — 功能闭环（近期）
 
 - [x] **`MM2::StoreMessages` / `RetrieveMessages` / `GetSessionMessages`**（**IM 索引 RAM**；**`Initialize`** 仅 **`ImRamClearUnlocked()`**，**不**扫盘清历史 IM）。  
 - [x] **`MessageQueryManager::ListMessages*`** 已委托 **`MM2`**。  
 - [x] **`MarkMessageRead` / `GetUnreadSessionMessages`**（**RAM** **`has_read` / `read_at_ms`**；与历史 **`im_messages.read_at_ms`** 语义一致）。JNI **`getUnreadSessionMessageIds`** 已由 **`jni/JniNatives.cpp`** 接线至 **`JniBridge`**。
-- [x] **MM2 余量 API**：**IM 侧**（回复/编辑、**`ListMessagesSinceTimestamp`**、**`CleanupSessionMessages`**、**`GetMessageCount`**）走 **RAM**；**好友/群/文件/续传等**仍接 **`SqliteMetadataDb`**（**`user_version=11`**，**无** IM 表）。**群会话回复**：**`StoreMessageReplyRelation`** 经 **`group_members`** **SQL** 校验成员（与 **`05` 第3节 `MessageReplyManager`** 一致）。  
+- [x] **MM2 余量 API**：IM 走 **RAM**；元数据 **`user_version=11`**（**无** IM 表）。群回复经 **`group_members`** 校验（见本文第3节 **`MessageReplyManager`**）。  
 - [x] **`ZChatIMJNI`**：**`RegisterNatives`** 全表（**`jni/JniNatives.cpp`**）+ **`ZChatIMNative.java`**；**`getSessionMessages` / `listMessages*`** 的 Java **`byte[][]`** 行格式与 **`MessageQueryManager.h`** / **`01-JNI.md`**（**`message_id(16)‖lenBE32‖payload`**）一致。
 
 ### 7.3 P1 — 安全与上线相关
 
-**服务端管多设备**时的 **M2 最小落地顺序**：**`docs/07-Engineering/03-M2-Minimal-ServerOwnedDevices.md`**。
+**M2 / 密钥 / 设备前提**：**[`Scope.md`](Scope.md)**。
 
-- [x] **M2「增强」文档结案**：**HSM / libsecret（或 Credential Manager）/ MM1 密钥策略大一统** 等按 **`docs/07-Engineering/04-M2-Key-Policy-And-Extensions.md` 第3节、第6节** 列为**非本期实现**；合规需要时 **单独立项** 并回写 **`04`/`05`**。**本期交付**以 **ZMK1/2/3 + ZMKP + SQLCipher 派生链** 为界。
-
-- [x] **`mm2_message_key.bin` 最小闭环（服务端管多设备）**：**ZMK1 / ZMK2 / ZMK3** 已实现（**`MM2.cpp`**、**`MM2_message_key_darwin.cpp`**）；运维与 **`Cleanup` vs `CleanupAllData` / 紧急擦除** 口径见 **`03-Storage.md` 第4.3节**；清单与勾选见 **`docs/07-Engineering/03-M2-Minimal-ServerOwnedDevices.md`**。**回归**：**`ZChatIM --test`**（含 **`RunMm2MessageKeyProtectedFileTests`**、**`CleanupAllData`**、Win **明文→ZMK1 迁移** 等）。  
-- [x] **`mm2_message_key.bin` 增强（按产品）**：**ZMKP v1**（口令 + PBKDF2 + GCM 包裹主密钥）、**`MM2::Initialize(..., passphrase)`** 已落地；**JNI `initializeWithPassphrase`** 由 native 桥接（**`JniBridge` / `JniNatives`** 等）对齐 C++（Java 侧以 **`01-JNI.md`** 为准）。**HSM** / **libsecret** / **与 MM1 统一密钥策略** 的**可选扩展**见 **`docs/07-Engineering/04-M2-Key-Policy-And-Extensions.md`**（**明确不做**清单）。**SQLCipher** 仍从该主密钥 **域分离派生**（**`03-Storage.md` 第4.2节**）。**`--test`**：**`RunMm2MessageKeyProtectedFileTests`** 含 **ZMKP** 子用例（**`ZCHATIM_USE_SQLCIPHER=ON`**）。  
-- [x] **SQLCipher**：**`ZCHATIM_USE_SQLCIPHER`**（默认 ON）、**`SqliteMetadataDb::Open(…, key)`**、**明文库迁移**、**第4.2节 PRAGMA**（见 **`03-Storage.md`**）。  
-- [x] **`StoreMessages` 批处理语义**：失败时对已成功条**内部回滚**、**`outMessageIds` 清空**（**全有或全无**；**`LastError`** 为首条失败原因）。
+- [x] **ZMK1/2/3 + ZMKP + SQLCipher 域分离**：实现见 **`MM2.cpp`** 等；运维 **[`docs/02-Core/03-Storage.md`](../../docs/02-Core/03-Storage.md) 第4.2～4.3节**。**非本期**：HSM、libsecret 替代 ZMK、MM1–MM2 密钥大一统 — **`Scope.md`**。  
+- [x] **SQLCipher 默认 ON**、**`Open(…, key)`**、明文迁移、PRAGMA。  
+- [x] **`StoreMessages` 批处理**：全有或全无回滚。
 
 ### 7.4 P2 — 工程与 MM1
 
 - [x] 收敛 **`include/mm2/...` 重复路径**：已删除 **`mm2/*.h` 转发层**，统一 **`mm2/storage/...`**（见 **第5节**）。  
 - [x] **MM1 P0（内存/RNG/密钥门面）**：**`AllocateSecureMemory`** 等与 **`common::Memory` / `mm2::Crypto`** 对齐（见 **第3节**）。  
-- [x] **MM1 并发契约**：**`MM1`** public 实例方法入口持 **`m_apiRecursiveMutex`**；**`JniSecurityPolicy.h`** 补充 **初始化顺序**、**MM1→MM2 锁顺序** 与 **`JniBridge::m_initialized`（`std::atomic<bool>`）**。**`MM1::Get*Manager()`** 仅覆盖**取引用**瞬间；**JNI** 整段调用仍受 **`JniBridge::m_apiRecursiveMutex`** 保护（**细目**：**`ZChatIM/docs/JNI-API-Documentation.md` §0 第7条**）。  
+- [x] **MM1 并发契约**：`MM1` public 入口持 `m_apiRecursiveMutex`；锁顺序与 `m_initialized` 见 `JniSecurityPolicy.h`；JNI 整段见 [`JNI-API-Documentation.md`](JNI-API-Documentation.md) 第0节第7条。  
 - [x] **`MessageReplyManager` → MM2`**：**`StoreMessageReplyRelation`** 含 **`TryGetSessionUserId`**、**Ed25519**、**MM2** **RAM** 存回复关系；**群会话**另经 **`group_members`** **SQL** 成员校验（**`user_version=11`**）。  
 - [x] **`ZChatIMJNI` + `JniBridge`**：**`RegisterNatives`** 全量绑定（**`jni/JniNatives.cpp`**）。  
-- [x] **`01-MM1.md` 愿景（M3）**：**双棘轮、纯内存分散消息、Random Allocator 等** 在 **`01-MM1.md` 一点五、一点五.3** 与 **[02-Cpp-Completion-Roadmap.md](../07-Engineering/02-Cpp-Completion-Roadmap.md) 第5节** 已**结案**为 **M3 独立立项、非当前 C++ 交付义务**（**不**占 **`--test`** / 发版阻塞项）；**当前默认**以 **`05` 第2～3节** 与 **`ZChatIM/` 源码**为准。**各 Manager 产品级业务链**仍可能扩展（**JNI 入口已接**）。**`UserStatusManager`**（**`mm1_user_status`**）与 **多设备 / IM 活跃 / 证书 Pin / @ALL 限速窗** 已落 **元库**（见 **第3节 `MM1_manager_stubs.cpp` / `MentionPermissionManager.cpp`**）。
+- [x] **M3 愿景结案**：见 **[`docs/02-Core/01-MM1.md`](../../docs/02-Core/01-MM1.md) 一点五.3**、**`Scope.md`**。当前实现以**本文第2～3节**与源码为准。
 
 ---
 
@@ -204,14 +191,14 @@
 
 | 文档 | 用途 |
 |------|------|
-| [README.md](../README.md) | **冲突与权威**（落盘 vs 内存、重启语义） |
-| [03-Storage.md](03-Storage.md) | 元数据表、MM2 行为、实现落点 第七节 |
-| [04-ZdbBinaryLayout.md](04-ZdbBinaryLayout.md) | `.zdb` v1 二进制 |
-| [02-MM2.md](02-MM2.md) | 架构与产品叙述（与 第七节 冲突时以 第七节 + 源码为准） |
-| [01-MM1.md](01-MM1.md) | MM1 安全框架叙述 |
-| [01-JNI.md](../06-Appendix/01-JNI.md) | JNI 方法表（与 `JniInterface.h` 严格对应） |
-| [01-Build-ZChatIM.md](../07-Engineering/01-Build-ZChatIM.md) | **`ZChatIMCore` / EXE / JNI** 目标与 **`CMakeLists.txt`** 选项 |
-| [02-Cpp-Completion-Roadmap.md](../07-Engineering/02-Cpp-Completion-Roadmap.md) | C++ **M0–M3** 阶段划分 |
-| [03-M2-Minimal-ServerOwnedDevices.md](../07-Engineering/03-M2-Minimal-ServerOwnedDevices.md) | **M2 最小清单**（**服务端管多设备**）与收尾状态 |
-| `ZChatIM/docs/JNI-API-Documentation.md` | JNI 详细路由与安全不变量 |
-| [02-ZSP-Protocol.md](../01-Architecture/02-ZSP-Protocol.md) | ZSP 消息类型与 TLV 扩展（与功能文档交叉引用） |
+| [docs/README.md](../../docs/README.md) | 根目录规范索引 |
+| [docs/AUTHORITY.md](../../docs/AUTHORITY.md) | 持久化与冲突裁决 |
+| [docs/02-Core/03-Storage.md](../../docs/02-Core/03-Storage.md) | 元数据、MM2 行为第七节 |
+| [docs/02-Core/04-ZdbBinaryLayout.md](../../docs/02-Core/04-ZdbBinaryLayout.md) | `.zdb` v1 |
+| [docs/02-Core/02-MM2.md](../../docs/02-Core/02-MM2.md) | MM2 概念（与第七节冲突以第七节为准） |
+| [docs/02-Core/01-MM1.md](../../docs/02-Core/01-MM1.md) | MM1 |
+| [docs/06-Appendix/01-JNI.md](../../docs/06-Appendix/01-JNI.md) | JNI 方法表 |
+| [Build.md](Build.md) | CMake、产物、测试入口 |
+| [Scope.md](Scope.md) | M0–M3、M2 密钥、未做/阻塞 |
+| [JNI-API-Documentation.md](JNI-API-Documentation.md) | JNI 边界与分组路由 |
+| [docs/01-Architecture/02-ZSP-Protocol.md](../../docs/01-Architecture/02-ZSP-Protocol.md) | ZSP |

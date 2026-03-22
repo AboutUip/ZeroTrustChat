@@ -526,9 +526,9 @@ namespace ZChatIM::mm1::security {
 
     JniSecurity::~JniSecurity() = default;
 
-    bool JniSecurity::ValidateCall(const void* jniEnv, const void* jclass)
+    bool JniSecurity::ValidateCall(const void* jniEnv, const void* jcls)
     {
-        return ValidateEnvironment(jniEnv) && ValidateClass(jniEnv, jclass);
+        return ValidateEnvironment(jniEnv) && ValidateClass(jniEnv, jcls);
     }
 
     bool JniSecurity::ValidateEnvironment(const void* jniEnv)
@@ -536,16 +536,16 @@ namespace ZChatIM::mm1::security {
         return jniEnv != nullptr;
     }
 
-    bool JniSecurity::ValidateClass(const void* jniEnv, const void* jclass)
+    bool JniSecurity::ValidateClass(const void* jniEnv, const void* jcls)
     {
-        return jniEnv != nullptr && jclass != nullptr;
+        return jniEnv != nullptr && jcls != nullptr;
     }
 
-    std::string JniSecurity::StringFromJni(const void* jniEnv, const void* jstring)
+    std::string JniSecurity::StringFromJni(const void* jniEnv, const void* jstr)
     {
 #if defined(ZCHATIM_HAVE_JNI)
         auto* env = static_cast<JNIEnv*>(const_cast<void*>(jniEnv));
-        auto* js  = static_cast<jstring>(const_cast<void*>(jstring));
+        auto* js  = static_cast<jstring>(const_cast<void*>(jstr));
         if (!env || !js) {
             return {};
         }
@@ -561,48 +561,48 @@ namespace ZChatIM::mm1::security {
         return out;
 #else
         (void)jniEnv;
-        (void)jstring;
+        (void)jstr;
         return {};
 #endif
     }
 
-    std::vector<uint8_t> JniSecurity::ByteArrayFromJni(const void* jniEnv, const void* jbyteArray)
+    std::vector<uint8_t> JniSecurity::ByteArrayFromJni(const void* jniEnv, const void* jbytes)
     {
 #if defined(ZCHATIM_HAVE_JNI)
         auto* env = static_cast<JNIEnv*>(const_cast<void*>(jniEnv));
-        auto* arr = static_cast<jbyteArray>(const_cast<void*>(jbyteArray));
+        auto* arr = static_cast<jbyteArray>(const_cast<void*>(jbytes));
         if (!env || !arr) {
             return {};
         }
         if (env->ExceptionCheck()) {
             return {};
         }
-        const jsize n = env->GetArrayLength(arr);
-        if (n < 0) {
+        const jsize len = env->GetArrayLength(arr);
+        if (len < 0) {
             return {};
         }
-        std::vector<uint8_t> out(static_cast<size_t>(n));
-        if (n > 0) {
+        std::vector<uint8_t> out(static_cast<size_t>(len));
+        if (len > 0) {
             jbyte* body = env->GetByteArrayElements(arr, nullptr);
             if (!body) {
                 return {};
             }
-            std::memcpy(out.data(), body, static_cast<size_t>(n));
+            std::memcpy(out.data(), body, static_cast<size_t>(len));
             env->ReleaseByteArrayElements(arr, body, JNI_ABORT);
         }
         return out;
 #else
         (void)jniEnv;
-        (void)jbyteArray;
+        (void)jbytes;
         return {};
 #endif
     }
 
-    int32_t JniSecurity::IntFromJni(const void* jniEnv, const void* jvalue)
+    int32_t JniSecurity::IntFromJni(const void* jniEnv, const void* jobj)
     {
 #if defined(ZCHATIM_HAVE_JNI)
         auto* env = static_cast<JNIEnv*>(const_cast<void*>(jniEnv));
-        auto* jo  = static_cast<jobject>(const_cast<void*>(jvalue));
+        auto* jo  = static_cast<jobject>(const_cast<void*>(jobj));
         if (!env || !jo) {
             return 0;
         }
@@ -617,16 +617,16 @@ namespace ZChatIM::mm1::security {
         return env->CallIntMethod(jo, mid);
 #else
         (void)jniEnv;
-        (void)jvalue;
+        (void)jobj;
         return 0;
 #endif
     }
 
-    int64_t JniSecurity::LongFromJni(const void* jniEnv, const void* jvalue)
+    int64_t JniSecurity::LongFromJni(const void* jniEnv, const void* jobj)
     {
 #if defined(ZCHATIM_HAVE_JNI)
         auto* env = static_cast<JNIEnv*>(const_cast<void*>(jniEnv));
-        auto* jo  = static_cast<jobject>(const_cast<void*>(jvalue));
+        auto* jo  = static_cast<jobject>(const_cast<void*>(jobj));
         if (!env || !jo) {
             return 0;
         }
@@ -641,7 +641,7 @@ namespace ZChatIM::mm1::security {
         return env->CallLongMethod(jo, mid);
 #else
         (void)jniEnv;
-        (void)jvalue;
+        (void)jobj;
         return 0;
 #endif
     }
@@ -728,9 +728,9 @@ namespace ZChatIM::mm1::security {
         return jniEnv != nullptr;
     }
 
-    bool JniSecurity::IsValidJniClass(const void* jniEnv, const void* jclass)
+    bool JniSecurity::IsValidJniClass(const void* jniEnv, const void* jcls)
     {
-        return jniEnv != nullptr && jclass != nullptr;
+        return jniEnv != nullptr && jcls != nullptr;
     }
 
     // --- KeyManagement ---

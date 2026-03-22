@@ -10,7 +10,7 @@
 
 <br/>
 
-**全库规范入口** → **[`docs/README.md`](docs/README.md)**（索引、权威链、维护约定）
+**产品规范** → **[`docs/README.md`](docs/README.md)**；**持久化裁决** → **[`docs/AUTHORITY.md`](docs/AUTHORITY.md)**；**C++ 构建/实现跟踪** → **[`ZChatIM/docs/README.md`](ZChatIM/docs/README.md)**
 
 </div>
 
@@ -60,39 +60,16 @@ flowchart LR
 
 ## 文档地图
 
-### 架构与协议
-
-| 文档 | 说明 |
-| :--- | :--- |
-| [01-Overview](docs/01-Architecture/01-Overview.md) | 系统架构总览 |
-| [02-ZSP-Protocol](docs/01-Architecture/02-ZSP-Protocol.md) | ZSP 帧与 TLV |
-
-### 核心与存储
-
-| 文档 | 说明 |
-| :--- | :--- |
-| [01-MM1](docs/02-Core/01-MM1.md) | 安全内存与销毁级别 |
-| [02-MM2](docs/02-Core/02-MM2.md) | 消息与存储编排 |
-| [03-Storage](docs/02-Core/03-Storage.md) | 表结构、密文落盘、实现对照 |
-| [04-ZdbBinaryLayout](docs/02-Core/04-ZdbBinaryLayout.md) | `.zdb` v1 二进制布局 |
-| [05-Implementation-Status](docs/02-Core/05-ZChatIM-Implementation-Status.md) | C++ 实现状态（活文档） |
-
-### JNI · 业务 · 构建
-
-| 文档 | 说明 |
-| :--- | :--- |
-| [01-JNI](docs/06-Appendix/01-JNI.md) | JNI 接口表 |
-| [JNI-API-Documentation](ZChatIM/docs/JNI-API-Documentation.md) | JNI 细则与路由 |
-| [01-SpringBoot](docs/03-Business/01-SpringBoot.md) | 网关与 MM1 边界 |
-| [01-Build-ZChatIM](docs/07-Engineering/01-Build-ZChatIM.md) | CMake、平台、Release |
+规范索引见 [`docs/README.md`](docs/README.md)。持久化裁决见 [`docs/AUTHORITY.md`](docs/AUTHORITY.md)。C++ 构建、实现状态与范围见 [`ZChatIM/docs/README.md`](ZChatIM/docs/README.md)。
 
 ---
 
-## ◆ 仓库结构
+## 仓库结构
 
 ```text
 ZerOS-Chat/
-├── docs/           ← 全库技术规范（架构 … 工程）
+├── docs/           ← 产品规范（架构、业务、存储、JNI 契约）
+├── ZChatIM/docs/   ← C++ 构建、实现跟踪、Scope
 ├── ZChatIM/        ← C++：CMake · 源码 · jni/
 ├── Client/         ← 客户端发布物说明 → Client/README.md
 ├── LICENSE
@@ -105,12 +82,12 @@ Spring Boot 可与本仓库**解耦**；职责边界见 **[01-SpringBoot.md](doc
 
 ## 构建 ZChatIM
 
-完整说明：**[01-Build-ZChatIM.md](docs/07-Engineering/01-Build-ZChatIM.md)**。
+完整说明：**[ZChatIM/docs/Build.md](ZChatIM/docs/Build.md)**。
 
 ```cmake
-# 常用：关闭 JNI，Release 构建
+# 仅控制台 EXE（不要 JNI DLL）：ZCHATIM_BUILD_MODE=ExeOnly
 cd ZChatIM
-cmake -B build -DZCHATIM_BUILD_JNI=OFF
+cmake -B build -DZCHATIM_BUILD_MODE=ExeOnly
 cmake --build build --config Release
 ```
 
@@ -118,7 +95,7 @@ cmake --build build --config Release
 | :---: | :--- |
 | **全平台** | **OpenSSL 3.x**（**MM2** AES-GCM / PBKDF2 / RNG、**MM1** Ed25519 **`EVP`**、**SQLCipher**、**`common::Random`** 等）；**Windows** 另 **`crypt32`**（**DPAPI** `mm2_message_key.bin`）；缺失时 CMake **`FATAL_ERROR`** |
 | **VS 多配置** | 命令行加 **`--config Release`**（或 IDE 中选 Release） |
-| **树内测试** | 默认 **`ZCHATIM_BUILD_TESTS=ON`**，编译 **`ZChatIM/tests/*.cpp`**，**`ZChatIM --test`** 一次跑 common + MM1/MM2 + **minimal MM2** + MM2-50 + JNI IM smoke；最小 exe 时 **`-DZCHATIM_BUILD_TESTS=OFF`** → [构建说明 第7节](docs/07-Engineering/01-Build-ZChatIM.md#7-控制台-exe-与树内测试) |
+| **树内测试** | 默认 **`ZCHATIM_BUILD_TESTS=ON`**，编译 **`ZChatIM/tests/*.cpp`**，**`ZChatIM --test`** 一次跑 common + MM1/MM2 + **minimal MM2** + MM2-50 + JNI IM smoke；最小 exe 时 **`-DZCHATIM_BUILD_TESTS=OFF`** → [Build.md 第7节](ZChatIM/docs/Build.md#7-控制台-exe-与树内测试) |
 
 ---
 
@@ -132,7 +109,7 @@ cmake --build build --config Release
 | **持久化从严** | **凡落盘即增加泄露面**；**默认最小化**；仅允许经**白名单 + 生命周期**审定的数据进入 **SQLite / `.zdb`**；**能内存则内存**，**禁止**为省事扩大持久化面 |
 | **加密落盘** | 对**获准**落盘的数据：**密文在 `.zdb`**、元数据侧 **SQLCipher（默认）**（[03-Storage.md](docs/02-Core/03-Storage.md)）；**未获准不得落盘** |
 
-冲突与权威链 → **[docs/README.md 第 2 节](docs/README.md)**（含**持久化立场**与**当前实现**事实区分）。
+冲突与权威链 → [`docs/AUTHORITY.md`](docs/AUTHORITY.md)。
 
 ---
 

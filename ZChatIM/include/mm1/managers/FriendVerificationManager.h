@@ -5,12 +5,8 @@
 
 namespace ZChatIM {
     namespace mm1 {
-        // =============================================================
-        // 好友验证管理器契约（签名校验/状态流转的前置校验）
-        // =============================================================
         class FriendVerificationManager {
         public:
-            // VerifyFriendRequestSignature(fromUserId,toUserId,timestamp,signature)
             bool VerifyFriendRequestSignature(
                 const std::vector<uint8_t>& fromUserId,
                 const std::vector<uint8_t>& toUserId,
@@ -25,7 +21,6 @@ namespace ZChatIM {
                 uint64_t timestampSeconds,
                 const std::vector<uint8_t>& signatureEd25519) const;
 
-            // VerifyDeleteFriendSignature(userA,userB,timestamp,signature)
             bool VerifyDeleteFriendSignature(
                 const std::vector<uint8_t>& userA,
                 const std::vector<uint8_t>& userB,

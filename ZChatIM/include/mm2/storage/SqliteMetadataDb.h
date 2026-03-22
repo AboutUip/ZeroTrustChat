@@ -3,14 +3,9 @@
 // cSpell:words Upsert upsert
 // (SQL/SQLite insert-or-replace terminology; appears in method names.)
 
-// SQLite metadata index (docs/02-Core/03-Storage.md): zdb_files, data_blocks, user_data, group_data, group_members,
-// friend_requests, mm2_group_display, mm2_file_transfer, **mm2_group_mute**、**mm1_device_sessions** / **mm1_im_session_activity** /
-// **mm1_cert_pin_*** / **mm1_user_status** / **mm1_mention_atall_window**（**元库 `user_version=11`**；**无** IM 表）。
-// **IM** 仅 **MM2 RAM**；本库**不**含 **`im_messages` / `im_message_reply`**（项目未上线、不做旧库迁移）。
-// **`ZCHATIM_USE_SQLCIPHER=1`**（默认，见 CMake）：**SQLCipher** 页级加密 + 固定 PRAGMA；密钥为 **`mm2_message_key.bin` 主密钥**经域分离 **SHA-256** 派生的 **32 字节 raw key**（见 **`DeriveMetadataSqlcipherKeyFromMessageMaster`**）。关闭宏时回退 **vanilla `sqlite3.c`**。
-//
-// Thread-safety: connection opened with **SQLITE_OPEN_FULLMUTEX** (SQLite serialized / thread-safe API use).
-// **`MM2` 仍对外持锁**串行化编排；**勿**在其它线程绕过 MM2 直接并发调用同一实例。
+// Metadata DB: 03-Storage. user_version=11; no IM tables (IM in MM2 RAM).
+// SQLCipher: key from mm2_message_key.bin via DeriveMetadataSqlcipherKeyFromMessageMaster; else vanilla sqlite3.
+// FULLMUTEX; serialize via MM2, do not bypass.
 
 #include <cstdint>
 #include <filesystem>
@@ -21,7 +16,6 @@
 namespace ZChatIM::mm2 {
 
 #if defined(ZCHATIM_USE_SQLCIPHER)
-    // 由 **`MM2::Initialize`** 在加载 **`mm2_message_key.bin`**（32B 主密钥）后调用；与消息 **AES-GCM** 密钥材料分离。
     bool DeriveMetadataSqlcipherKeyFromMessageMaster(
         const std::vector<uint8_t>& messageMasterKey32,
         std::vector<uint8_t>&       outSqlcipherKey32);
@@ -46,8 +40,7 @@ namespace ZChatIM::mm2 {
         SqliteMetadataDb& operator=(const SqliteMetadataDb&) = delete;
 
 #if defined(ZCHATIM_USE_SQLCIPHER)
-        // **`sqlcipherKey32`**：须恰为 **32** 字节 **raw** 密钥（由 **`DeriveMetadataSqlcipherKeyFromMessageMaster`** 从消息主密钥派生）。
-        // 若磁盘上为**旧版明文** `SQLite format 3` 库，**首次**打开会自动迁移为 SQLCipher 文件（同路径旁可能短暂出现 **`.zchatim_sqlcipher_migrate.tmp`** / **`.pre_sqlcipher.bak`**）。
+        // 32B raw key; plain DB auto-migrates to SQLCipher (tmp/bak beside path).
         bool Open(const std::filesystem::path& dbPath, const std::vector<uint8_t>& sqlcipherKey32);
         bool Open(const std::string& dbPathUtf8, const std::vector<uint8_t>& sqlcipherKey32);
 #else

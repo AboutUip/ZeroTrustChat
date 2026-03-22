@@ -142,6 +142,19 @@ namespace ZChatIM::mm1 {
         return true;
     }
 
+    bool RtcCallSessionManager::IsInitiator(const std::vector<uint8_t>& principalUserId, const std::vector<uint8_t>& callId)
+    {
+        if (!impl_ || callId.size() != MESSAGE_ID_SIZE || principalUserId.size() != USER_ID_SIZE) {
+            return false;
+        }
+        std::lock_guard<std::mutex> lk(impl_->mutex);
+        const auto it = impl_->byCallId.find(callId);
+        if (it == impl_->byCallId.end()) {
+            return false;
+        }
+        return SameUser(principalUserId, it->second.initiator);
+    }
+
     int32_t RtcCallSessionManager::GetCallState(const std::vector<uint8_t>& principalUserId, const std::vector<uint8_t>& callId)
     {
         if (!impl_ || callId.size() != MESSAGE_ID_SIZE || principalUserId.size() != USER_ID_SIZE) {
@@ -172,6 +185,47 @@ namespace ZChatIM::mm1 {
             return -1;
         }
         return it->second.kind;
+    }
+
+    static void AppendBe32(std::vector<uint8_t>& row, int32_t v)
+    {
+        const auto u = static_cast<uint32_t>(v);
+        row.push_back(static_cast<uint8_t>((u >> 24) & 0xFF));
+        row.push_back(static_cast<uint8_t>((u >> 16) & 0xFF));
+        row.push_back(static_cast<uint8_t>((u >> 8) & 0xFF));
+        row.push_back(static_cast<uint8_t>(u & 0xFF));
+    }
+
+    std::vector<std::vector<uint8_t>> RtcCallSessionManager::ListCallsForUser(
+        const std::vector<uint8_t>& principalUserId)
+    {
+        std::vector<std::vector<uint8_t>> out;
+        if (!impl_ || principalUserId.size() != USER_ID_SIZE) {
+            return out;
+        }
+        std::lock_guard<std::mutex> lk(impl_->mutex);
+        for (const auto& pr : impl_->byCallId) {
+            const auto& e = pr.second;
+            const bool isInit = SameUser(principalUserId, e.initiator);
+            const bool isPeer = SameUser(principalUserId, e.peer);
+            if (!isInit && !isPeer) {
+                continue;
+            }
+            std::vector<uint8_t> other(USER_ID_SIZE);
+            if (isInit) {
+                std::memcpy(other.data(), e.peer.data(), USER_ID_SIZE);
+            } else {
+                std::memcpy(other.data(), e.initiator.data(), USER_ID_SIZE);
+            }
+            std::vector<uint8_t> row;
+            row.reserve(MESSAGE_ID_SIZE + USER_ID_SIZE + 4 + 4);
+            row.insert(row.end(), pr.first.begin(), pr.first.end());
+            row.insert(row.end(), other.begin(), other.end());
+            AppendBe32(row, e.kind);
+            AppendBe32(row, e.state);
+            out.push_back(std::move(row));
+        }
+        return out;
     }
 
 } // namespace ZChatIM::mm1

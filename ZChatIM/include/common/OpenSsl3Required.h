@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // 所有链接 **OpenSSL::Crypto** 的翻译单元应尽早 `#include "common/OpenSsl3Required.h"`，
 // 在编译期拒绝 OpenSSL 1.x / 错配的 include 路径（与 **CMake `find_package(OpenSSL 3.0)`** 一致）。

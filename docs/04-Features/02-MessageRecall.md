@@ -49,6 +49,6 @@ Level 2 覆写:
 ## 五、安全保证
 
 - MM2：**`DeleteMessage` → `ImRamEraseUnlocked`**（**RAM IM** 删除；**不**动文件分片的 **`data_blocks`**；见 **`03-Storage.md` 第七节**、**`05` 第8节**）
-- 索引与块一致（失败路径见 **`05-ZChatIM-Implementation-Status.md` 第8节**）
+- 索引与块一致（失败路径见 **`ZChatIM/docs/Implementation-Status.md` 第8节**）
 - Level 2 覆写（MM1 内存与策略）
 - 强制撤回

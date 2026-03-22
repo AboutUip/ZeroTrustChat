@@ -1,6 +1,6 @@
 # 好友验证技术规范
 
-> **冲突处理**：**`MM2::StoreFriendRequest` / `UpdateFriendRequestStatus` / `DeleteFriendRequest` / `CleanupExpiredFriendRequests` 已落 SQLite 表 `friend_requests`**（与 **`zchatim_metadata.db`** 同库；**`PRAGMA user_version=11`**，见 **`03-Storage.md` 第2.6节**、**`05` 第2.1节**）。**签名校验**仍须在 **MM1 / JNI** 路径完成（**`01-JNI.md`**）；**`MM2` 不验证 Ed25519**。下文含 **产品与协议目标**。
+> 状态在元库表 **`friend_requests`**（[`03-Storage.md`](../02-Core/03-Storage.md) 第2.6节）。Ed25519 仅在 MM1/JNI（[`01-JNI.md`](../06-Appendix/01-JNI.md)）；MM2 不验签。下文为产品与协议目标。
 
 ## 一、请求流程
 

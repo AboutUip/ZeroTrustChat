@@ -13,11 +13,25 @@ project(ZChatIM VERSION 1.0.0 LANGUAGES CXX C)
 # 元数据索引 **`zchatim_metadata.db`**：默认 **SQLCipher**（页级加密 + 固定「严格」PRAGMA，见 `docs/02-Core/03-Storage.md` 第4.2节）。
 # 关闭则回退 **`thirdparty/sqlite/sqlite3.c`** 明文库（仅建议本地调试）。
 option(ZCHATIM_USE_SQLCIPHER "Link SQLCipher for encrypted metadata SQLite (see docs)" ON)
-option(ZCHATIM_BUILD_JNI "Build JNI shared library" ON)
-option(ZCHATIM_BUILD_EXE "Build console executable" ON)
-# Default ON：编译 tests/*.cpp 进 ZChatIM.exe（**`--test`** 跑全量）。
-# OFF：仅 main.cpp；**`--test*`** 会提示未编入测试（见 main.cpp）。
-option(ZCHATIM_BUILD_TESTS "Compile in-tree tests into ZChatIM.exe" ON)
+
+# Single switch for outputs (VS: CMakePresets — windows-exe-only / windows-jni-dll-only / windows-both).
+set(ZCHATIM_BUILD_MODE "Both" CACHE STRING "ExeOnly | JniDllOnly | Both")
+set_property(CACHE ZCHATIM_BUILD_MODE PROPERTY STRINGS ExeOnly JniDllOnly Both)
+if(ZCHATIM_BUILD_MODE STREQUAL "ExeOnly")
+    set(ZCHATIM_BUILD_EXE ON)
+    set(ZCHATIM_BUILD_JNI OFF)
+elseif(ZCHATIM_BUILD_MODE STREQUAL "JniDllOnly")
+    set(ZCHATIM_BUILD_EXE OFF)
+    set(ZCHATIM_BUILD_JNI ON)
+elseif(ZCHATIM_BUILD_MODE STREQUAL "Both")
+    set(ZCHATIM_BUILD_EXE ON)
+    set(ZCHATIM_BUILD_JNI ON)
+else()
+    message(FATAL_ERROR "ZCHATIM_BUILD_MODE must be ExeOnly, JniDllOnly, or Both (got '${ZCHATIM_BUILD_MODE}')")
+endif()
+
+# Only when ZChatIM.exe is built: merge tests/*.cpp (--test).
+option(ZCHATIM_BUILD_TESTS "Compile in-tree tests into ZChatIM.exe" OFF)
 
 # 密码学后端（**全平台 OpenSSL 3**）：
 # - **MM2 `Crypto.cpp`**：**EVP_aes_256_gcm** / **PKCS5_PBKDF2_HMAC** / **RAND_bytes**。
@@ -66,7 +80,7 @@ if(NOT TARGET OpenSSL::Crypto)
         "  Windows: install tree with include/openssl/ssl.h + libcrypto →\n"
         "    thirdparty/openssl/prebuilt/windows-x64/openssl/  (see thirdparty/openssl/LAYOUT.md)\n"
         "    or set OPENSSL_ROOT_DIR.\n"
-        "See docs/07-Engineering/01-Build-ZChatIM.md\n"
+        "See ZChatIM/docs/Build.md\n"
     )
 endif()
 
@@ -184,6 +198,9 @@ add_library(ZChatIMCore STATIC
     src/mm1/managers/AuthSessionManager.cpp
     src/mm1/managers/LocalAccountCredentialManager.cpp
     src/mm1/managers/RtcCallSessionManager.cpp
+    src/mm1/managers/VoiceVideoCallManager.cpp
+    src/mm1/managers/RtcCallManager.cpp
+    src/mm1/managers/MediaCallCoordinator.cpp
     src/mm1/managers/MessageReplyManager.cpp
     src/mm1/managers/MessageRecallManager.cpp
     src/mm1/managers/UserDataManager.cpp
@@ -308,6 +325,8 @@ if(ZCHATIM_BUILD_EXE)
             tests/mm1_managers_test.cpp
             tests/mm2_fifty_scenarios_test.cpp
             tests/jni_im_smoke_test.cpp
+            tests/jni_local_register_rtc_test.cpp
+            tests/test_im_1k_test.cpp
         )
     endif()
     add_executable(ZChatIM ${_zchatim_exe_sources})
@@ -352,8 +371,14 @@ endif()
 message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID}")
 message(STATUS "C++ Standard: C++${CMAKE_CXX_STANDARD}")
 message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "Build JNI: ${ZCHATIM_BUILD_JNI}")
-message(STATUS "Build EXE: ${ZCHATIM_BUILD_EXE}")
+message(STATUS "ZCHATIM_BUILD_MODE: ${ZCHATIM_BUILD_MODE}")
+message(STATUS "Build JNI (ZChatIMJNI): ${ZCHATIM_BUILD_JNI}")
+message(STATUS "Build EXE (ZChatIM): ${ZCHATIM_BUILD_EXE}")
 message(STATUS "In-tree tests in EXE: ${ZCHATIM_BUILD_TESTS}")
-message(STATUS "ZChatIM.exe output: ${CMAKE_BINARY_DIR}/bin (flat, MSVC multi-config)")
+if(ZCHATIM_BUILD_EXE)
+    message(STATUS "ZChatIM.exe -> ${CMAKE_BINARY_DIR}/bin (flat, MSVC multi-config)")
+endif()
+if(ZCHATIM_BUILD_JNI)
+    message(STATUS "ZChatIMJNI.dll -> ${CMAKE_BINARY_DIR}/lib (flat per-config on MSVC)")
+endif()
 message(STATUS "===============================================")

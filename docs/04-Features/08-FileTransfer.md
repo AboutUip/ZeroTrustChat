@@ -1,6 +1,6 @@
 # 文件传输技术规范
 
-> **冲突处理**：**`StoreFileChunk`** 将分片写入 **`.zdb`** 并记 **`data_blocks`**（**`03-Storage.md` 第七节**），**非**「仅内存」。**续传断点**由 **`MM2::StoreTransferResumeChunkIndex` / `GetTransferResumeChunkIndex` / `CleanupTransferResumeChunkIndex`** 写入 SQLite 表 **`mm2_file_transfer`**（与 **`zchatim_metadata.db`** 同库，**`PRAGMA user_version=11`**；见 **`03-Storage.md`**、**`05-ZChatIM-Implementation-Status.md` 第2.1节**）；**`CompleteFile` / `CancelFile`** 已接库。**JNI**：文件相关 **`native`** 已由 **`JniBridge` + `jni/JniNatives.cpp`** 导出（**`01-JNI.md`**）。
+> 分片落 **`.zdb`** + `data_blocks`（[`03-Storage.md`](../02-Core/03-Storage.md)）；续传索引表 `mm2_file_transfer`。JNI 见 [`01-JNI.md`](../06-Appendix/01-JNI.md) 第七节。
 
 ## 一、传输流程
 

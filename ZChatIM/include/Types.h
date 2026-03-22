@@ -4,10 +4,7 @@
 #include <string>
 #include <vector>
 
-// -----------------------------------------------------------------------------
-// Packed binary layouts at global scope (MSVC: avoids parse/IntelliSense issues
-// when #pragma pack sits inside namespace ZChatIM).
-// -----------------------------------------------------------------------------
+// Packed layouts at global scope (MSVC: #pragma pack outside namespace).
 #pragma pack(push, 1)
 struct ZChatIM_BlockHeadLayout {
     std::uint8_t magic[2];
@@ -36,43 +33,31 @@ namespace ZChatIM
     using BlockHead = ZChatIM_BlockHeadLayout;
     using ZdbHeader = ZChatIM_ZdbHeaderLayout;
 
-    // =============================================================
-    // 基础类型长度定义
-    // =============================================================
+    constexpr size_t USER_ID_SIZE = 16;
 
-    constexpr size_t USER_ID_SIZE = 16; // 用户ID长度 (16字节)
-
-    // JNI 认证会话句柄 callerSessionId：须与 Auth 返回的二进制句柄同长；所有需授权 API 首参（除 Auth/Verify/Init 等外）。
     constexpr size_t JNI_AUTH_SESSION_TOKEN_BYTES = USER_ID_SIZE;
-    // ZSP 协议 Header 内 SessionID 字段长度（见 docs/01-Architecture/02-ZSP-Protocol.md）。
     constexpr size_t SESSION_ID_SIZE = 4;
-    constexpr size_t MESSAGE_ID_SIZE   = 16; // 消息ID长度 (16字节)
-    constexpr size_t NONCE_SIZE        = 12; // AES-GCM Nonce长度 (12字节)
-    constexpr size_t AUTH_TAG_SIZE     = 16; // GCM认证标签长度 (16字节)
-    constexpr size_t CRYPTO_KEY_SIZE   = 32; // 加密密钥长度 (32字节)
-    constexpr size_t SHA256_SIZE       = 32; // SHA-256哈希长度 (32字节)
-    constexpr size_t BLOCK_ID_HASH_SIZE = 8; // 消息块ID哈希长度 (8字节)
+    constexpr size_t MESSAGE_ID_SIZE   = 16;
+    constexpr size_t NONCE_SIZE        = 12;
+    constexpr size_t AUTH_TAG_SIZE     = 16;
+    constexpr size_t CRYPTO_KEY_SIZE   = 32;
+    constexpr size_t SHA256_SIZE       = 32;
+    constexpr size_t BLOCK_ID_HASH_SIZE = 8;
 
-    // Auth 不透明凭证（token）最小字节数；与 `AuthSessionManager::VerifyCredential` 一致（服务端票据 / API key 级强度）。
     constexpr size_t AUTH_OPAQUE_CREDENTIAL_MIN_BYTES = 32;
 
-    // 本地账户（**`LocalAccountCredentialManager`**）：口令与恢复密钥分别存 **mm1_user_kv**（须 **MM2::Initialize**）。
+    // mm1_user_kv; need MM2::Initialize.
     constexpr int32_t MM1_USER_KV_TYPE_LOCAL_PASSWORD_V1 = 0x4C504831; // ASCII "LPH1"
     constexpr int32_t MM1_USER_KV_TYPE_LOCAL_RECOVERY_V1 = 0x4C524331; // ASCII "LRC1"
     constexpr size_t LOCAL_ACCOUNT_PASSWORD_MIN_UTF8_BYTES             = 8;
     constexpr size_t LOCAL_ACCOUNT_PASSWORD_MAX_UTF8_BYTES             = 512;
     constexpr int    LOCAL_ACCOUNT_PBKDF2_ITERATIONS                   = 200'000;
 
-    // =============================================================
-    // 魔术数定义
-    // =============================================================
+    constexpr int32_t MEDIA_CALL_KIND_AUDIO = 0;
+    constexpr int32_t MEDIA_CALL_KIND_VIDEO = 1;
 
-    constexpr uint8_t MAGIC_MB[2]   = {0x5A, 0x4D};              // 消息块魔术数 "ZM"
-    constexpr char MAGIC_ZDB[4]     = {'Z', 'D', 'B', '\0'};     // .zdb文件魔术数
-
-    // =============================================================
-    // 消息内容 (明文)
-    // =============================================================
+    constexpr uint8_t MAGIC_MB[2]   = {0x5A, 0x4D};
+    constexpr char MAGIC_ZDB[4]     = {'Z', 'D', 'B', '\0'};
 
     struct MessageContent {
         uint64_t              sequence;
@@ -82,10 +67,6 @@ namespace ZChatIM
         std::vector<uint8_t> payload;
     };
 
-    // =============================================================
-    // 消息块 (完整结构)
-    // =============================================================
-
     struct MessageBlock {
         BlockHead             head;
         uint8_t               cryptoKey[32];
@@ -93,10 +74,6 @@ namespace ZChatIM
         std::vector<uint8_t> content;
         uint8_t               authTag[16];
     };
-
-    // =============================================================
-    // 数据块索引
-    // =============================================================
 
     struct DataBlockIndex {
         std::string blockId;
@@ -107,10 +84,6 @@ namespace ZChatIM
         uint64_t    length;
         uint8_t     sha256[32];
     };
-
-    // =============================================================
-    // 错误码
-    // =============================================================
 
     enum class ErrorCode {
         SUCCESS = 0,
@@ -135,12 +108,8 @@ namespace ZChatIM
         ERROR_FILE_EXPIRED      = 4002,
     };
 
-    // =============================================================
-    // 常量定义
-    // =============================================================
-
     constexpr size_t ZDB_FILE_SIZE       = 5 * 1024 * 1024;
-    // 以下两项为规范预留；当前 `ZdbManager` 实现未强制分卷个数上下限（见 docs/02-Core/04-ZdbBinaryLayout.md 第5节）。
+    // Reserved; ZdbManager does not enforce (04-ZdbBinaryLayout 5).
     constexpr size_t ZDB_MIN_FILES       = 5;
     constexpr size_t ZDB_MAX_FILES       = 2000;
     constexpr size_t ZDB_MAX_WRITE_SIZE  = 500 * 1024;

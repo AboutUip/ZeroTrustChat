@@ -15,7 +15,7 @@
 1. 重新启动进程 → MM1 会话丢失，客户端须重新 Auth
 2. MM2 Initialize(dataDir, indexDir) → 打开已有 .zdb 与 zchatim_metadata.db
 3. **`StoreFileChunk`** 等已写入的数据仍在 **`.zdb`/元库**，可继续 **`GetFileChunk` / 读元数据**；**IM** 须重新 **`StoreMessage`** 或由上层同步拉取（RAM 已空）
-4. 若 index 与 .zdb 不一致，见 03-Storage 第七节 / 05-ZChatIM-Implementation-Status 第8节 部分失败路径
+4. 若 index 与 .zdb 不一致，见 03-Storage 第七节 / ZChatIM/docs/Implementation-Status.md 第8节 部分失败路径
 ```
 
 ## 三、数据状态

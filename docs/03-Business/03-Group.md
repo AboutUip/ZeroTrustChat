@@ -153,12 +153,12 @@ Member Key (成员加密密钥) → .zdb 存储 (公钥加密)
 - Group Key: MM1 可信区存储，Level 3 销毁
 - Member Key: .zdb 加密存储
 - 分发确认: 双向 ACK
-- 传输: TLS 1.3 + 端到端加密
+- 传输: **ZSP** 承载 + 端到端加密；链路层 **TLS** 为部署可选项（见 **`docs/01-Architecture/02-ZSP-Protocol.md` 第十节**）
 - 校验: SHA-256 完整性验证
 
 ## 十、与当前 ZChatIM native 实现的对照（避免与上文产品愿景混淆）
 
-| 主题 | 本文档（产品/目标） | **当前代码**（权威：`docs/02-Core/05-ZChatIM-Implementation-Status.md`） |
+| 主题 | 本文档（产品/目标） | **当前代码**（权威：`ZChatIM/docs/Implementation-Status.md`） |
 |------|---------------------|--------------------------------------------------------------------------|
 | 成员列表可见性 | 第八节：倾向管理员可见完整列表 | **`GetGroupMembers`**：任意**在群成员**可拉取 **`user_id` 列表**（SQLite **`group_members`**） |
 | 群密钥 / `group_data` | Group Key、Member Key、**.zdb** 大块、成员级分发 | **已实现本地信封 `ZGK1`**：**`group_data` + `data_blocks` chunk0**（**44B**：魔数 + epoch + 32B 随机）；**`CreateGroup`** 写首包，**`UpdateGroupKey`** 由 **owner/admin** 轮换；**尚无** per-member 加密分发 / ACK（见 第六节） |

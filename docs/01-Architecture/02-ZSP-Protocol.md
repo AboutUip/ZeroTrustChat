@@ -202,6 +202,8 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 └───────────────┴─────────────┴─────────────┘
 ```
 
+**与 native 呼叫状态**：客户端在建立/变更通话时，可先用 JNI **`RtcStartCall` / `RtcAcceptCall` / `RtcRejectCall` / `RtcEndCall`**（**`docs/06-Appendix/01-JNI.md` 一.2**）在 **`mm1::RtcCallSessionManager`** 中登记 **16B `callId`**（**`MESSAGE_ID_SIZE`**），再通过 ZSP **`CALL_SIGNAL`** 的 **Data** 携带同一 **callId**（建议固定置于 **Data** 前 16 字节，后接 SDP/ICE 等）与对端同步。**信令走 ZSP**，**媒体面**仍由 WebRTC 等在上层完成。
+
 ### 6.7 AUTH (0x81)
 
 ```
@@ -307,13 +309,17 @@ AEAD 加密输出，包含加密数据完整性认证。
 
 ## 十、传输层
 
+**边界**：**ZSP 为本系统自研的应用层协议**（本文档第二节起）。客户端与网关（如 Netty）之间以 **ZSP 帧**为语义单元；**不等同于 HTTPS**，也**不要求**业务开户、信令、消息必须走 HTTP。
+
 | 项目 | 要求 |
 |------|------|
-| 协议 | TCP / UDP |
-| 传输加密 | TLS 1.3 (必须) |
-| 端口 | 自定义 (默认 8848) |
+| 应用层 | **ZSP**（Header / Meta / Payload / Auth Tag）；载荷机密性与完整性由协议内 **AEAD** 与产品约定共同保证（见 Header **Encrypted** 等） |
+| 传输承载 | **TCP**（推荐）或 **UDP**；端口由部署约定（如默认 8848） |
+| 链路加密（可选） | 若部署在 TCP 上叠加 **TLS 1.3**（或同类），属**集成方策略**，用于保护 **ZSP 字节流**在链路上的额外一层；**纯 TCP + ZSP** 亦为合法部署。**TLS 不是 ZSP 的替代物**，也**非**本文档对应用协议的硬性要求 |
 | 心跳间隔 | 30 秒 |
 | 心跳超时 | 90 秒 |
+
+**与 JNI / 可信区**：网关在不可信区完成 ZSP 编解码后，经 JNI 将 **opaque 载荷**交给 **MM1/MM2**；详见 **`docs/03-Business/01-SpringBoot.md`**、**`docs/06-Appendix/01-JNI.md`**。
 
 ---
 

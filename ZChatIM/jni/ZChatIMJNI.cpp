@@ -1,5 +1,5 @@
 // ZChatIM JNI 动态库入口：`RegisterNatives` 绑定 `com.yhj.zchat.jni.ZChatIMNative` → `JniInterface` / `JniBridge`。
-// 构建：ZChatIM/CMakeLists.txt（ZCHATIM_BUILD_JNI、JAVA_HOME / JNI 头路径）。
+// 构建：ZChatIM/CMakeLists.txt（ZCHATIM_BUILD_MODE=JniDllOnly|Both、JAVA_HOME / JNI 头路径）。
 
 #include <jni.h>
 

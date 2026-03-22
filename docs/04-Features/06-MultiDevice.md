@@ -2,7 +2,7 @@
 
 > **文档类型**：**产品与 MM1 会话模型**；与 **MM2 消息落盘** 独立（多设备均可读同一用户本地库或各自客户端库，部署相关）。  
 > **权威**：**`docs/03-Business/04-Session.md`**（idle/心跳）；JNI 契约 **`docs/06-Appendix/01-JNI.md`**「八、会话与多设备」。  
-> **实现状态**：**`05-ZChatIM-Implementation-Status.md` 第3节**：**JNI** **`registerDeviceSession` / `getDeviceSessions` 等** 已接 **`JniBridge` + `jni/JniNatives.cpp`**；**`DeviceSessionManager`** 经 **`MM2` → `SqliteMetadataDb`** 写入 **`mm1_device_sessions`**（**`user_version=11`**），**同一 `indexDir` 元库**下 **进程重启可恢复**（须 **`MM2::Initialize`** 成功；**`EmergencyWipe`/`CleanupAllData`** 删库即清空）。**服务端**仍为设备列表/踢设备**权威**；本地表**不**构成集群级或多端同步真相源。
+> **实现状态**：**`ZChatIM/docs/Implementation-Status.md` 第3节**：**JNI** **`registerDeviceSession` / `getDeviceSessions` 等** 已接 **`JniBridge` + `jni/JniNatives.cpp`**；**`DeviceSessionManager`** 经 **`MM2` → `SqliteMetadataDb`** 写入 **`mm1_device_sessions`**（**`user_version=11`**），**同一 `indexDir` 元库**下 **进程重启可恢复**（须 **`MM2::Initialize`** 成功；**`EmergencyWipe`/`CleanupAllData`** 删库即清空）。**服务端**仍为设备列表/踢设备**权威**；本地表**不**构成集群级或多端同步真相源。
 
 ---
 
@@ -97,5 +97,5 @@
 |------|------|
 | [04-Session.md](../03-Business/04-Session.md) | IM 会话 idle、心跳 |
 | [01-JNI.md](../06-Appendix/01-JNI.md) | 完整 JNI 表 |
-| [05-ZChatIM-Implementation-Status.md](../02-Core/05-ZChatIM-Implementation-Status.md) | MM1/JNI 实现进度 |
+| [Implementation-Status.md](../../ZChatIM/docs/Implementation-Status.md) | MM1/JNI 实现进度 |
 | [README.md](../README.md) | MM1 内存 vs MM2 磁盘 |

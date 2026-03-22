@@ -42,8 +42,13 @@ namespace ZChatIM
             bool RejectCall(const std::vector<uint8_t>& principalUserId, const std::vector<uint8_t>& callId);
             bool EndCall(const std::vector<uint8_t>& principalUserId, const std::vector<uint8_t>& callId);
 
+            bool IsInitiator(const std::vector<uint8_t>& principalUserId, const std::vector<uint8_t>& callId);
+
             int32_t GetCallState(const std::vector<uint8_t>& principalUserId, const std::vector<uint8_t>& callId);
             int32_t GetCallKind(const std::vector<uint8_t>& principalUserId, const std::vector<uint8_t>& callId);
+
+            // 每行 **40B**：**callId(16) ‖ counterpartyUserId(16) ‖ kind(BE32) ‖ state(BE32)**（与 **`RtcGetCallState`** 常量一致）。
+            std::vector<std::vector<uint8_t>> ListCallsForUser(const std::vector<uint8_t>& principalUserId);
         private:
             struct Impl;
             std::unique_ptr<Impl> impl_;

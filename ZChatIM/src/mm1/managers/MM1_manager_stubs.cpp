@@ -8,6 +8,7 @@
 
 #include "mm1/MM1.h"
 #include "mm2/MM2.h"
+#include "jni/JniBridge.h"
 #include "Types.h"
 
 #include <chrono>
@@ -26,11 +27,12 @@ namespace ZChatIM::mm1 {
     // GroupManager：见 GroupManager.cpp
 
     // -------------------------------------------------------------------------
-    // SystemControl（委托 MM1 单例；与 JniBridge::EmergencyWipe 同源可信区语义）
+    // SystemControl（委托 MM1 单例；擦除语义同 JniBridge::EmergencyWipe，并 **NotifyExternalTrustedZoneWipeHandled**）
     // -------------------------------------------------------------------------
     void SystemControl::EmergencyWipe()
     {
         MM1::Instance().EmergencyTrustedZoneWipe();
+        ZChatIM::jni::JniBridge::Instance().NotifyExternalTrustedZoneWipeHandled();
     }
 
     std::map<std::string, std::string> SystemControl::GetStatus()

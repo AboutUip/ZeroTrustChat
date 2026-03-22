@@ -113,7 +113,8 @@ namespace ZChatIM::mm1 {
         if (signature.size() != kEd25519SignatureBytes) {
             return false;
         }
-        if (newEncryptedContent.size() > ZChatIM::ZDB_MAX_WRITE_SIZE) {
+        constexpr size_t kOverhead = ZChatIM::NONCE_SIZE + ZChatIM::AUTH_TAG_SIZE;
+        if (newEncryptedContent.size() > ZChatIM::ZDB_MAX_WRITE_SIZE - kOverhead) {
             return false;
         }
 

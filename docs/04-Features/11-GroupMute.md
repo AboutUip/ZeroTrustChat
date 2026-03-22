@@ -1,9 +1,6 @@
 # 群组禁言技术规范
 
-> **文档类型**：**产品与 MM1 权限模型**；禁言状态由 **`mm2_group_mute`** 表达，**不**混在 **IM RAM** 消息行内。  
-> **JNI**：**`docs/06-Appendix/01-JNI.md`**「六、群聊安全特性」——`MuteMember`、`IsMuted`、`UnmuteMember`。  
-> **实现状态**：**`05-ZChatIM-Implementation-Status.md` 第3节** — **`mm1::GroupMuteManager`**（**`GroupMuteManager.cpp`**）已实现；持久化 **`MM2::SqliteMetadataDb`** 表 **`mm2_group_mute`**（元数据库正常 **`user_version=11`**；**`mm2_group_mute`** 表自 **v6** 引入，见 **`03-Storage.md` 第2.6节**）；**JNI** 经 **`JniBridge`** 路由至该管理器（见 **`ZChatIM/docs/JNI-API-Documentation.md`**「GroupMute」）。  
-> **ZSP**：禁言信令消息类型为 **`0x14` `GROUP_MUTE`**（**`02-ZSP-Protocol.md` 第五节**）。
+> 状态表 **`mm2_group_mute`**（非 IM RAM）。JNI：[`01-JNI.md`](../06-Appendix/01-JNI.md) 第六节；路由 [`JNI-API-Documentation.md`](../../ZChatIM/docs/JNI-API-Documentation.md) 第2节；实现见 [`Implementation-Status`](../../ZChatIM/docs/Implementation-Status.md) 第3节。ZSP **`GROUP_MUTE` = 0x14**（[`02-ZSP-Protocol.md`](../01-Architecture/02-ZSP-Protocol.md)）。
 
 ## 一、禁言流程
 
@@ -104,5 +101,5 @@
 |------|------|
 | [02-ZSP-Protocol.md](../01-Architecture/02-ZSP-Protocol.md) | **0x14 GROUP_MUTE** |
 | [01-JNI.md](../06-Appendix/01-JNI.md) | 完整 JNI 表 |
-| [05-ZChatIM-Implementation-Status.md](../02-Core/05-ZChatIM-Implementation-Status.md) | MM1 进度 |
+| [Implementation-Status.md](../../ZChatIM/docs/Implementation-Status.md) | MM1 进度 |
 | [03-Storage.md](../02-Core/03-Storage.md) | MM2 表结构（与禁言记录分离） |

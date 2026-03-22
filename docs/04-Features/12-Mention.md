@@ -1,9 +1,6 @@
 # @提及技术规范
 
-> **文档类型**：**ZSP 载荷 TLV** + **MM1 权限校验**。  
-> **编号注意**：**TLV Type `0x15`（Mention）** 与 ZSP **消息类型**表中的 **`0x15` = GROUP_REMOVE** 是**不同命名空间**（见 **`02-ZSP-Protocol.md` 第7.2节 文首说明**）。本文 **0x15** 均指 **TLV 扩展**。  
-> **JNI**：**`ValidateMentionRequest`**、**`RecordMentionAtAllUsage`**（**`01-JNI.md`** 第六节）。  
-> **实现状态**：**`05-ZChatIM-Implementation-Status.md` 第3节** — **`MentionPermissionManager`**：**Ed25519** + **`group_members`（SQL）** 成员/角色；**@ALL** 限速在 **`mm1_mention_atall_window`**（**`user_version=11`**，重启可恢复）。**JNI** **`validateMentionRequest` / `recordMentionAtAllUsage`** 已接 **`JniBridge`**。**禁止**在其它路径绕过签名校验直调 MM2。
+> ZSP TLV **`0x15`（Mention）** 与消息类型 **`0x15` GROUP_REMOVE** 不同命名空间（[`02-ZSP-Protocol.md`](../01-Architecture/02-ZSP-Protocol.md) 第7.2节）。JNI：`validateMentionRequest` / `recordMentionAtAllUsage`（[`01-JNI.md`](../06-Appendix/01-JNI.md) 第六节）。实现：`MentionPermissionManager`，表 `mm1_mention_atall_window`；路由见 [`JNI-API-Documentation.md`](../../ZChatIM/docs/JNI-API-Documentation.md) 第2节。禁止绕过验签直调 MM2。
 
 ---
 
@@ -107,4 +104,4 @@ TEXT + TLV 0x15:
 | [02-ZSP-Protocol.md](../01-Architecture/02-ZSP-Protocol.md) | TLV 0x15、与 MessageType 区分 |
 | [01-JNI.md](../06-Appendix/01-JNI.md) | `ValidateMentionRequest` 等 |
 | [ZChatIM/docs/JNI-API-Documentation.md](../../ZChatIM/docs/JNI-API-Documentation.md) | 职责分离不变量 |
-| [05-ZChatIM-Implementation-Status.md](../02-Core/05-ZChatIM-Implementation-Status.md) | 实现进度 |
+| [Implementation-Status.md](../../ZChatIM/docs/Implementation-Status.md) | 实现进度 |

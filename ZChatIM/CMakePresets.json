@@ -7,14 +7,37 @@
   },
   "configurePresets": [
     {
-      "name": "windows-default",
-      "displayName": "Windows x64: OpenSSL 3 + SQLCipher amalgamation (no vcpkg)",
-      "description": "MM2/MM1/crypto: OpenSSL 3 libcrypto (AES-GCM, PBKDF2, RAND, Ed25519 EVP, SHA-256 EVP). SQLCipher: in-tree sqlite3.c + OpenSSL::SSL/Crypto. Optional: thirdparty/openssl/prebuilt/windows-x64/openssl or OPENSSL_ROOT_DIR. JNI off by default in this preset.",
+      "name": "windows-base",
+      "hidden": true,
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
-      "binaryDir": "${sourceDir}/build",
+      "binaryDir": "${sourceDir}/build"
+    },
+    {
+      "name": "windows-exe-only",
+      "displayName": "ZChatIM — console EXE only",
+      "description": "ZChatIM.exe + ZChatIMCore.lib; no JNI DLL. OpenSSL/SQLCipher per CMakeLists.",
+      "inherits": "windows-base",
       "cacheVariables": {
-        "ZCHATIM_BUILD_JNI": "OFF"
+        "ZCHATIM_BUILD_MODE": "ExeOnly"
+      }
+    },
+    {
+      "name": "windows-jni-dll-only",
+      "displayName": "ZChatIM — JNI DLL only",
+      "description": "ZChatIMJNI.dll + ZChatIMCore.lib; no console EXE. Set JAVA_HOME for jni.h.",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "ZCHATIM_BUILD_MODE": "JniDllOnly"
+      }
+    },
+    {
+      "name": "windows-both",
+      "displayName": "ZChatIM — EXE + JNI DLL",
+      "description": "ZChatIM.exe and ZChatIMJNI.dll.",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "ZCHATIM_BUILD_MODE": "Both"
       }
     }
   ]

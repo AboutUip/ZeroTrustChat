@@ -74,10 +74,11 @@
 | 用户元数据 | .zdb | 不过期 | MM1索引 + .zdb |
 | 好友列表 | .zdb | 不过期 | MM1索引 + .zdb |
 | 群组信息 | .zdb | 不过期 | MM1索引 + .zdb |
-| 聊天消息 | **`.zdb` 密文 + SQLite 索引**（**`StoreMessage`**） | 7 天（**产品 TTL 策略**，**非**当前 MM2 自动裁剪） | MM2（落盘）+ MM1（认证等） |
+| 聊天消息（IM 体） | **进程内 RAM**（**`StoreMessage`**）；**非**元库 `im_messages` 热路径 | 产品 TTL 可另定；**当前无**按天自动删 IM RAM | MM2 RAM + MM1 认证 |
 | 文件分片 | **`.zdb` + `data_blocks`**（**`StoreFileChunk`**） | 产品策略可定清理 | MM2（落盘）+ MM1（按需） |
 
-> **禁止混淆**：**MM1 会话表、限流计数** 等为 **内存**，进程重启即失；**MM2 消息/文件分片** 为 **磁盘**（`dataDir` / `indexDir`），与上表一致。权威见 [docs/README.md](../README.md)「冲突与权威」、[03-Storage.md](../02-Core/03-Storage.md) 第七节、[05-ZChatIM-Implementation-Status.md](../02-Core/05-ZChatIM-Implementation-Status.md)。
+> **禁止混淆**：**IM 体**与**文件分片/元数据**分列；权威 [**`AUTHORITY.md`**](../AUTHORITY.md)、[**`03-Storage.md`**](../02-Core/03-Storage.md) 第七节、[**`ZChatIM/docs/Implementation-Status.md`**](../../ZChatIM/docs/Implementation-Status.md)。
+
 | 会话密钥（Session Key，密码学） | 内存 | **1小时**（轮换周期） | MM1 |
 
 > **与 IM 通道**：上表为 **Session Key 轮换/存活策略**（与 [05-KeyRotate.md](../03-Business/05-KeyRotate.md) 第1.1节 一致）。**JNI/MM1 通道** 的 `imSessionId` **idle 30 分钟** 见 [04-Session.md](../03-Business/04-Session.md)，与 Session Key 周期是不同维度。
@@ -123,9 +124,9 @@
 |------|------|------|
 | 同步 | 统一消息机制 | [01-MessageSync.md](../04-Features/01-MessageSync.md) |
 | 撤回 | MM1 Recall + MM2 **区间清零与删索引**（非文件截断） | [02-MessageRecall.md](../04-Features/02-MessageRecall.md) |
-| 缓存 | **产品目标** 100 条/会话 LRU；**当前无独立内存缓存模块**，见 [03-MessageCache.md](../04-Features/03-MessageCache.md) |
+| 缓存 | **产品目标** 热缓存/LRU；**当前 native 无独立 LRU 模块**，见 [**`AUTHORITY.md`**](../AUTHORITY.md)、[**`04-Features/README.md`**](../04-Features/README.md) |
 | 重传 | ZSP协议层 3次重试 | [04-Retry.md](../04-Features/04-Retry.md) |
-| 文件传输 | 分片 **已落盘**；**续传/完成/取消** 见 **MM2 + `mm2_file_transfer`**（[05 实现状态](../02-Core/05-ZChatIM-Implementation-Status.md) 第2.1节至第2.2节） | [08-FileTransfer.md](../04-Features/08-FileTransfer.md) |
+| 文件传输 | 分片 **已落盘**；**续传/完成/取消** 见 **MM2 + `mm2_file_transfer`**（[**`ZChatIM/docs/Implementation-Status.md`**](../../ZChatIM/docs/Implementation-Status.md) 第2节） | [08-FileTransfer.md](../04-Features/08-FileTransfer.md) |
 | 消息编辑 | Ed25519签名验证 | [09-MessageEdit.md](../04-Features/09-MessageEdit.md) |
 | 消息回复 | TLV 0x10扩展 | [10-MessageReply.md](../04-Features/10-MessageReply.md) |
 | 群组禁言 | 禁言/解禁机制 | [11-GroupMute.md](../04-Features/11-GroupMute.md) |
@@ -204,14 +205,14 @@
 
 ## 十三、服务重启
 
-**ZChatIM 客户端进程（本仓库 C++）**——与 [01-Backup.md](../05-Operations/01-Backup.md) 一致：
+**本仓库 C++ 进程**（与 [01-Backup.md](../05-Operations/01-Backup.md) 一致）：
 
 ```
-丢失（内存）: MM1 会话、限流/封禁计数、未持久化的临时态
-保留（磁盘）: dataDir 下 .zdb、indexDir 下 zchatim_metadata.db（及 mm2_message_key.bin）— 含已 StoreMessage / StoreFileChunk 的数据
+丢失（内存）: MM1 会话、限流/封禁、IM RAM（StoreMessage 载荷）
+保留（磁盘）: .zdb、元库、mm2_message_key.bin 等 — 含 StoreFileChunk 等已落盘数据
 ```
 
-**纯网关 / 无本地 MM2 落盘** 的部署另议，须在方案书中单独写清；**不得**默认同上表冲突。
+细则：[**`AUTHORITY.md`**](../AUTHORITY.md)、[**`03-Storage.md`**](../02-Core/03-Storage.md) 第七节。
 
 ---
 
@@ -219,6 +220,6 @@
 
 | 文档 | 详见 |
 |------|------|
-| JNI接口清单 | [01-JNI.md](../06-Appendix/01-JNI.md) |
-| 性能指标 | [02-Performance.md](../06-Appendix/02-Performance.md) |
-| 版本兼容 | [03-Version.md](../06-Appendix/03-Version.md) |
+| JNI | [01-JNI.md](../06-Appendix/01-JNI.md) |
+| 容量/性能目标 | [AUTHORITY.md](../AUTHORITY.md) 第四节 |
+| 版本 | [03-Version.md](../06-Appendix/03-Version.md) |

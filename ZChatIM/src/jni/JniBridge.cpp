@@ -7,6 +7,7 @@
 #include "Types.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <limits>
 #include <sstream>
 #include <utility>
@@ -31,6 +32,14 @@ namespace ZChatIM::jni {
             }
             return mm1.GetAuthSessionManager().TryGetSessionUserId(callerSessionId, outPrincipal)
                 && outPrincipal.size() == USER_ID_SIZE;
+        }
+
+        std::string NormalizeLocalPathUtf8ForCompare(const std::string& utf8)
+        {
+            if (utf8.empty()) {
+                return {};
+            }
+            return std::filesystem::path(utf8).lexically_normal().generic_string();
         }
 
         std::vector<std::vector<uint8_t>> PackSessionMessageRows(
@@ -128,8 +137,18 @@ namespace ZChatIM::jni {
         if (dataDir.empty() || indexDir.empty()) {
             return false;
         }
-        if (m_initialized.load(std::memory_order_relaxed)) {
-            return true;
+        if (m_initialized.load(std::memory_order_acquire)) {
+            if (!m_mm2.IsInitialized()) {
+                m_initialized.store(false, std::memory_order_release);
+            } else {
+                const std::string wantD = NormalizeLocalPathUtf8ForCompare(dataDir);
+                const std::string wantI = NormalizeLocalPathUtf8ForCompare(indexDir);
+                if (wantD != NormalizeLocalPathUtf8ForCompare(m_mm2.GetDataDirUtf8())
+                    || wantI != NormalizeLocalPathUtf8ForCompare(m_mm2.GetIndexDirUtf8())) {
+                    return false;
+                }
+                return true;
+            }
         }
         if (!m_mm1.Initialize()) {
             return false;
@@ -146,7 +165,13 @@ namespace ZChatIM::jni {
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
         m_mm2.Cleanup();
+        m_mm1.ClearAllAuthSessions();
         m_mm1.Cleanup();
+        NotifyExternalTrustedZoneWipeHandled();
+    }
+
+    void JniBridge::NotifyExternalTrustedZoneWipeHandled()
+    {
         m_initialized.store(false, std::memory_order_release);
     }
 
@@ -1536,7 +1561,7 @@ namespace ZChatIM::jni {
         (void)principal;
         // 高危：与 MM1::EmergencyTrustedZoneWipe / SystemControl::EmergencyWipe 同源（含 MM2 清库、认证/多设备/在线/Pin/IM 活跃/@ALL 限速、主密钥）。
         m_mm1.EmergencyTrustedZoneWipe();
-        m_initialized.store(false, std::memory_order_release);
+        NotifyExternalTrustedZoneWipeHandled();
     }
 
     std::map<std::string, std::string> JniBridge::GetStatus(const std::vector<uint8_t>& callerSessionId)
@@ -1726,14 +1751,14 @@ namespace ZChatIM::jni {
     bool JniBridge::ValidateJniCall()
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        // 退化路径：仅表示桥接已 **Initialize**；强校验请用 **`ValidateJniCall(env, jclass)`**。
+        // Weak: bridge initialized only; strong: ValidateJniCall(env, jcls).
         return m_initialized.load(std::memory_order_relaxed);
     }
 
-    bool JniBridge::ValidateJniCall(const void* jniEnv, const void* jclass)
+    bool JniBridge::ValidateJniCall(const void* jniEnv, const void* jcls)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        return m_mm1.ValidateJniCall(jniEnv, jclass);
+        return m_mm1.ValidateJniCall(jniEnv, jcls);
     }
 
 } // namespace ZChatIM::jni

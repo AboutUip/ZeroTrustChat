@@ -1,7 +1,6 @@
 # 消息编辑技术规范
 
-> **实现状态**：**`MM2::EditMessage` / `GetMessageEditState` 已接 RAM**（**`edit_count` / `last_edit_time_s` + 替换 `ImRamMessageRow.blob`**，见 **`03-Storage.md` 第2.6节**、**`05` 第2.2节**）。**JNI** **`editMessage` / `getMessageEditState`** 已接 **`JniBridge`**；**`MessageEditManager::ApplyEdit`** 当前多为**桩**（**未**做完整 Ed25519 产品校验），**产品级编辑闭环**仍待 MM1 实现。下文为 **产品与协议目标**。  
-> **TLV**：**`Type = 0x12` `MessageEdit`**（**`02-ZSP-Protocol.md` 第7.2节**）；**≠** **MessageType `0x12` `FRIEND_REQUEST`**（第五节）。
+> RAM 编辑态见 [`03-Storage.md`](../02-Core/03-Storage.md) 第2.6节；JNI 已接；`ApplyEdit` 产品级验签以源码为准。TLV **`0x12` MessageEdit** ≠ 消息类型 **`0x12` FRIEND_REQUEST**（[`02-ZSP-Protocol.md`](../01-Architecture/02-ZSP-Protocol.md)）。
 
 ## 一、编辑流程
 

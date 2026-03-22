@@ -6,34 +6,23 @@
 
 namespace ZChatIM
 {
-    // =============================================================
-    // 日志级别
-    // =============================================================
-    
     enum class LogLevel {
-        DEBUG = 0,    // 调试信息
-        INFO = 1,     // 普通信息
-        WARN = 2,     // 警告信息
-        ERROR = 3,    // 错误信息
-        FATAL = 4,    // 致命错误
+        DEBUG = 0,
+        INFO = 1,
+        WARN = 2,
+        ERROR = 3,
+        FATAL = 4,
     };
-    
-    // =============================================================
-    // 日志类（**多线程**：`Log*` 与 `SetLogFile` / `CloseLogFile` 互斥；级别过滤用原子读）
-    // =============================================================
-    
+
     class Logger {
     public:
-        // 获取单例实例
         static Logger& Instance() {
             static Logger instance;
             return instance;
         }
-        
-        // 设置日志级别
+
         void SetLogLevel(LogLevel level);
-        
-        // 日志输出方法
+
         void Debug(const char* format, ...);
         void Info(const char* format, ...);
         void Warn(const char* format, ...);
@@ -49,23 +38,16 @@ namespace ZChatIM
     private:
         Logger();
         ~Logger();
-        
-        // 禁止复制和赋值
+
         Logger(const Logger&) = delete;
         Logger& operator=(const Logger&) = delete;
-        
-        // 内部日志输出
+
         void Log(LogLevel level, const char* format, va_list args);
-        
-        // 成员变量
-        std::atomic<LogLevel> m_logLevel; // 当前日志级别（与 `SetLogLevel` 无锁竞争）
-        FILE* m_logFile;                  // 日志文件句柄（与输出共 `g_logMutex`）
+
+        std::atomic<LogLevel> m_logLevel;
+        FILE* m_logFile;
     };
-    
-    // =============================================================
-    // 日志宏定义
-    // =============================================================
-    
+
     #define LOG_DEBUG(fmt, ...) ZChatIM::Logger::Instance().Debug(fmt, ##__VA_ARGS__)
     #define LOG_INFO(fmt, ...) ZChatIM::Logger::Instance().Info(fmt, ##__VA_ARGS__)
     #define LOG_WARN(fmt, ...) ZChatIM::Logger::Instance().Warn(fmt, ##__VA_ARGS__)

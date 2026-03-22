@@ -1,79 +1,42 @@
-#pragma once
+﻿#pragma once
 
 #include <string>
 #include <cstdint>
 
 namespace ZChatIM
 {
-    namespace common
-    {
-        // =============================================================
-        // 时间工具类
-        // =============================================================
-        
-        class Time {
-        public:
-            // =============================================================
-            // 时间戳获取
-            // =============================================================
-            
-            // 获取当前时间戳（毫秒）
-            static uint64_t GetCurrentTimestamp();
-            
-            // 获取当前时间戳（秒）
-            static uint64_t GetCurrentTimestampSeconds();
-            
-            // =============================================================
-            // 时间戳转换
-            // =============================================================
-            
-            // 时间戳转字符串
-            static std::string TimestampToString(uint64_t timestamp);
-            
-            // 字符串转时间戳
-            static uint64_t StringToTimestamp(const std::string& timeStr);
-            
-            // =============================================================
-            // 时间计算
-            // =============================================================
-            
-            // 计算两个时间戳的差值（毫秒）
-            static int64_t CalculateDuration(uint64_t start, uint64_t end);
-            
-            // 计算两个时间戳的差值（秒）；**start/end 须与 `GetCurrentTimestamp()` 同为毫秒**，结果为毫秒差整除 1000
-            static int64_t CalculateDurationSeconds(uint64_t start, uint64_t end);
-            
-            // =============================================================
-            // 过期检查
-            // =============================================================
-            
-            // 检查是否过期（毫秒）
-            static bool IsExpired(uint64_t timestamp, uint64_t durationMs);
-            
-            // 检查是否过期（秒）；`timestamp` 与 **`GetCurrentTimestampSeconds()`** 同为**秒**（与 `IsExpired` 的毫秒不同）
-            static bool IsExpiredSeconds(uint64_t timestamp, uint64_t durationSeconds);
-            
-            // 检查是否过期（天）；`timestamp` 与 **`GetCurrentTimestampSeconds()`** 同为**秒**；`days` 过大导致秒数无法放入 **uint64_t** 时返回 **false**（视为未过期）
-            static bool IsExpiredDays(uint64_t timestamp, uint64_t days);
-            
-            // =============================================================
-            // 格式转换
-            // =============================================================
-            
-            // 获取当前时间字符串
-            static std::string GetCurrentTimeString();
-            
-            // 获取当前日期字符串（**`gmtime` 失败** 时返回**空串**）
-            static std::string GetCurrentDateString();
-            
-            // 获取当前日期时间字符串（**`gmtime` 失败** 时返回**空串**）
-            static std::string GetCurrentDateTimeString();
-            
-        private:
-            // 禁止实例化
-            Time() = delete;
-            ~Time() = delete;
-        };
-        
-    } // namespace common
+	namespace common
+	{
+		class Time {
+		public:
+			static uint64_t GetCurrentTimestamp();
+
+			static uint64_t GetCurrentTimestampSeconds();
+
+			static std::string TimestampToString(uint64_t timestamp);
+
+			static uint64_t StringToTimestamp(const std::string& timeStr);
+
+			static int64_t CalculateDuration(uint64_t start, uint64_t end);
+
+			static int64_t CalculateDurationSeconds(uint64_t start, uint64_t end);
+
+			static bool IsExpired(uint64_t timestamp, uint64_t durationMs);
+
+			static bool IsExpiredSeconds(uint64_t timestamp, uint64_t durationSeconds);
+
+			static bool IsExpiredDays(uint64_t timestamp, uint64_t days);
+
+			static std::string GetCurrentTimeString();
+
+			static std::string GetCurrentDateString();
+
+			static std::string GetCurrentDateTimeString();
+
+		private:
+			Time() = delete;
+			~Time() = delete;
+		};
+
+	} // namespace common
 } // namespace ZChatIM

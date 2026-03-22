@@ -25,6 +25,11 @@ namespace ZChatIM::jni {
         JniBridge::Instance().Cleanup();
     }
 
+    void JniInterface::NotifyExternalTrustedZoneWipeHandled()
+    {
+        JniBridge::Instance().NotifyExternalTrustedZoneWipeHandled();
+    }
+
 #define ZCHATIM_JNI_FWD0(Ret, Name) \
     Ret JniInterface::Name() \
     { \
@@ -194,7 +199,7 @@ namespace ZChatIM::jni {
     ZCHATIM_JNI_FWD6(bool, UpdateFriendNote, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, userId, const std::vector<uint8_t>&, friendId, const std::vector<uint8_t>&, newEncryptedNote, uint64_t, updateTimestampSeconds, const std::vector<uint8_t>&, signatureEd25519)
 
     ZCHATIM_JNI_FWD0(bool, ValidateJniCall)
-    ZCHATIM_JNI_FWD2(bool, ValidateJniCall, const void*, jniEnv, const void*, jclass)
+    ZCHATIM_JNI_FWD2(bool, ValidateJniCall, const void*, jniEnv, const void*, jcls)
 
 #undef ZCHATIM_JNI_FWD0
 #undef ZCHATIM_JNI_FWD1

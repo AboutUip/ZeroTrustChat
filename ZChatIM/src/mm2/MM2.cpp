@@ -859,6 +859,18 @@ namespace ZChatIM::mm2 {
         return m_initialized;
     }
 
+    std::string MM2::GetDataDirUtf8() const
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        return m_dataDir;
+    }
+
+    std::string MM2::GetIndexDirUtf8() const
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        return m_indexDir;
+    }
+
     bool MM2::StoreMm1UserDataBlob(
         const std::vector<uint8_t>& userId,
         int32_t                     type,
@@ -2252,8 +2264,12 @@ namespace ZChatIM::mm2 {
             SetLastError("EditMessage: messageId must be MESSAGE_ID_SIZE (16) bytes");
             return false;
         }
-        if (newEncryptedContent.size() > ZChatIM::ZDB_MAX_WRITE_SIZE) {
-            SetLastError("EditMessage: newEncryptedContent exceeds ZDB_MAX_WRITE_SIZE");
+        if (!EnsureMessageCryptoReadyUnlocked()) {
+            return false;
+        }
+        constexpr size_t kOverhead = ZChatIM::NONCE_SIZE + ZChatIM::AUTH_TAG_SIZE;
+        if (newEncryptedContent.size() > ZChatIM::ZDB_MAX_WRITE_SIZE - kOverhead) {
+            SetLastError("EditMessage: new content too large for single encrypted blob");
             return false;
         }
         if (newEditCount < 1U || newEditCount > 3U) {
@@ -2265,9 +2281,35 @@ namespace ZChatIM::mm2 {
             SetLastError("EditMessage: message not found (not in memory IM store)");
             return false;
         }
-        row->blob              = newEncryptedContent;
-        row->edit_count        = newEditCount;
-        row->last_edit_time_s  = editTimestampSeconds;
+        // 与 **`StoreMessage`** 一致：**`row->blob`** = nonce‖ciphertext‖tag，**`RetrieveMessage`** 才可解密。
+        std::vector<uint8_t> nonce = Crypto::GenerateNonce(ZChatIM::NONCE_SIZE);
+        if (nonce.size() != ZChatIM::NONCE_SIZE) {
+            SetLastError("EditMessage: GenerateNonce failed");
+            return false;
+        }
+        std::vector<uint8_t> ciphertext;
+        uint8_t              tag[ZChatIM::AUTH_TAG_SIZE]{};
+        if (!Crypto::EncryptMessage(
+                newEncryptedContent.empty() ? nullptr : newEncryptedContent.data(),
+                newEncryptedContent.size(),
+                m_messageStorageKey.data(),
+                m_messageStorageKey.size(),
+                nonce.data(),
+                nonce.size(),
+                ciphertext,
+                tag,
+                sizeof(tag))) {
+            SetLastError("EditMessage: Crypto::EncryptMessage failed");
+            return false;
+        }
+        std::vector<uint8_t> blob;
+        blob.reserve(nonce.size() + ciphertext.size() + sizeof(tag));
+        blob.insert(blob.end(), nonce.begin(), nonce.end());
+        blob.insert(blob.end(), ciphertext.begin(), ciphertext.end());
+        blob.insert(blob.end(), tag, tag + sizeof(tag));
+        row->blob             = std::move(blob);
+        row->edit_count       = newEditCount;
+        row->last_edit_time_s = editTimestampSeconds;
         return true;
     }
 

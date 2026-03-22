@@ -1,15 +1,15 @@
 # SpringBoot 技术规范
 
-> **仓库边界**：**`ZChatIM/`** 提供 **MM1/MM2 + JNI 头 + 桩 `ZChatIMJNI.cpp`**；**SpringBoot/Netty** 工程若在本 monorepo 外，须与本节及 **`02-ZSP-Protocol.md`** 对齐。  
+> **仓库边界**：**`ZChatIM/`** 提供 **MM1/MM2 + JNI 头 + `jni/ZChatIMJNI.cpp`（`JNI_OnLoad` → `RegisterNatives`）**；**SpringBoot/Netty** 工程若在本 monorepo 外，须与本节及 **`02-ZSP-Protocol.md`** 对齐。  
 > **JNI 契约**：**不得以本节 第五节 简表替代** **`docs/06-Appendix/01-JNI.md`**（含 **`callerSessionId` 首参**、`imSessionId` 与 **`StoreMessage`** 参数名）。  
-> **落盘**：**IM** 默认**不落盘**（**`MM2::StoreMessage` → RAM**，见 **`docs/README.md`**）；**文件分片 / 好友请求 / 群元数据等**由 **MM2 + 元库 / `.zdb`** 持久化；SpringBoot **不直连** SQLite/`.zdb` 文件。
+> **落盘**：**IM** 默认**进程内 RAM**（**`MM2::StoreMessage`**，见 **`docs/AUTHORITY.md`**）；**文件分片 / 好友请求 / 群元数据等**由 **MM2 + 元库 / `.zdb`** 持久化；SpringBoot **不直连** SQLite/`.zdb` 文件。
 
 ## 一、职责
 
-- ZSP 协议服务端
+- **ZSP 协议服务端**（**自研应用层协议**，见 **`02-ZSP-Protocol.md`**；**非**以 HTTPS 为 IM 主语义）
 - 业务逻辑调度
 - 消息路由
-- 对外 HTTP API
+- 可选 **对外 HTTP API**（运维、管理端等；**与 ZSP 主链路正交**）
 
 **原则**：不处理任何安全相关数据，仅持有引用 ID；**Payload opaque 透传** 至 JNI。
 

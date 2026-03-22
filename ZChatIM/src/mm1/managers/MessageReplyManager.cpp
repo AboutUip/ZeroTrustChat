@@ -1,5 +1,5 @@
 // MessageReplyManager: MM1 安全入口 → 会话绑定 + Ed25519 验签 → MM2 落库。
-// 文档：仓库根 `docs/02-Core/05-ZChatIM-Implementation-Status.md` 第3节、`ZChatIM/docs/JNI-API-Documentation.md`。
+// 文档：`ZChatIM/docs/Implementation-Status.md` 第3节、`ZChatIM/docs/JNI-API-Documentation.md`。
 
 #include "mm1/managers/MessageReplyManager.h"
 

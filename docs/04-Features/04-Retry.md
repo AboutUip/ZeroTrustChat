@@ -1,7 +1,7 @@
 # 消息重传技术规范
 
 > **文档类型**：**ZSP / 传输层** 行为；**不**描述 MM2 落盘或 SQLite。  
-> **权威**：**`docs/01-Architecture/02-ZSP-Protocol.md`**；与 **TCP/TLS** 栈参数以**实际 Netty/客户端实现**为准。  
+> **权威**：**`docs/01-Architecture/02-ZSP-Protocol.md`**；承载层为 **TCP（可选 TLS）+ ZSP 应用帧**，具体栈参数以**实际 Netty/客户端实现**为准。  
 > **冲突与落盘**：重传与 **消息是否写入 `.zdb`** 无关；持久化语义见 **`docs/README.md`**「冲突与权威」、**`docs/02-Core/03-Storage.md` 第七节**。
 
 ---
@@ -80,7 +80,7 @@
 
 | 项目 | 值 |
 |------|-----|
-| 协议 | TCP + TLS 1.3 + ZSP |
+| 协议 | **ZSP**（应用层），下挂 **TCP**；**TLS** 为链路可选加固（见 **`02-ZSP-Protocol.md` 第十节**） |
 | 重试 | 3次 |
 | 超时 | 30秒 |
 | 窗口大小 | 64 |
@@ -95,7 +95,7 @@
 | 层级 | 说明 |
 |------|------|
 | **本仓库** | **`ZChatIMCore`** 以 **MM1/MM2 存储与 JNI 头**为主；**不含 Netty ZSP 编解码器**。重传在 **Java/SpringBoot** 实现时须与本节及 **`02-ZSP-Protocol.md`** 对齐。 |
-| **联调** | JNI 业务入口见 **`docs/06-Appendix/01-JNI.md`**；当前 **`ZChatIMJNI.cpp`** 为桩（**`05-ZChatIM-Implementation-Status.md` 第4节**）。 |
+| **联调** | JNI 业务入口见 **`docs/06-Appendix/01-JNI.md`**；**`ZChatIM/jni/ZChatIMJNI.cpp`** 在 **`JNI_OnLoad`** 中调用 **`zchatim_RegisterNatives`** 绑定 **`JniNatives.cpp`**（与 **`ZChatIM/docs/Implementation-Status.md`** 为准）。 |
 
 ---
 

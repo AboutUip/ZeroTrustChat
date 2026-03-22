@@ -10,10 +10,7 @@ Client/Android/app/src/androidTest/
 *.zdb
 # ZChatIM --test 持久输出（./data，cwd 为 ZChatIM 目录时）
 .mvn/
-# ZChatIM/docs：忽略本地生成物；以下契约文档须保持可跟踪
-ZChatIM/docs/*
-!ZChatIM/docs/JNI-API-Documentation.md
-!ZChatIM/docs/BUILD-WINDOWS.md
+
 
 # ZChatIM 树内 C++ 测试源码不入库（提交/默认 CMake 不编测试）；本地自测请自备 tests/ 并 -DZCHATIM_BUILD_TESTS=ON
 ZChatServer/src/test/

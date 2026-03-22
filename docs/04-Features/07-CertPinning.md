@@ -76,4 +76,4 @@
 |------|------|
 | [01-JNI.md](../06-Appendix/01-JNI.md) | 方法签名与 caller 规则 |
 | [ZChatIM/docs/JNI-API-Documentation.md](../../ZChatIM/docs/JNI-API-Documentation.md) | 路由与安全细则 |
-| [05-ZChatIM-Implementation-Status.md](../02-Core/05-ZChatIM-Implementation-Status.md) | 实现进度 |
+| [Implementation-Status.md](../../ZChatIM/docs/Implementation-Status.md) | 实现进度 |

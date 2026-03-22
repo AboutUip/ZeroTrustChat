@@ -1,7 +1,7 @@
 # 协议版本兼容性技术规范
 
 > **与实现**：ZSP 帧头 **1 字节版本**见 **`docs/01-Architecture/02-ZSP-Protocol.md`**（**第六节 / Header** 与 **`03-Version` 第五节** 示意一致）。**`ZChatIM`** 若增加独立 **ABI/架构版本**，须在 **`Types.h` / 握手报文** 中单独定义，并回写本节。  
-> **C++ 与 Java**：**`ZChatIMCore`** 版本与 **客户端 App version** 协商不在本仓库自动完成；**`05-ZChatIM-Implementation-Status.md`** 描述 native 能力边界。
+> **C++ 与 Java**：**`ZChatIMCore`** 版本与 **客户端 App version** 协商不在本仓库自动完成；**`ZChatIM/docs/Implementation-Status.md`** 描述 native 能力边界。
 
 ## 一、版本管理
 
@@ -98,5 +98,5 @@ ZSP Header:
 | 文档 | 用途 |
 |------|------|
 | [02-ZSP-Protocol.md](../01-Architecture/02-ZSP-Protocol.md) | ZSP 头版本字节、消息类型表 |
-| [05-ZChatIM-Implementation-Status.md](../02-Core/05-ZChatIM-Implementation-Status.md) | native 能力边界 |
+| [Implementation-Status.md](../../ZChatIM/docs/Implementation-Status.md) | native 能力边界 |
 | [README.md](../README.md) | 冲突与权威 |

@@ -32,6 +32,9 @@ namespace ZChatIM::mm1 {
         if (!mm2::Crypto::Init()) {
             return false;
         }
+        m_voiceVideoCallManager.AttachRtcSessionManager(&m_rtcCallSessionManager);
+        m_rtcCallManager.AttachRtcSessionManager(&m_rtcCallSessionManager);
+        m_mediaCallCoordinator.AttachRtcSessionManager(&m_rtcCallSessionManager);
         m_initialized = true;
         return true;
     }
@@ -40,6 +43,10 @@ namespace ZChatIM::mm1 {
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
         // Do not call mm2::Crypto::Cleanup here — MM2 owns global crypto lifetime.
+        // 与 **`JniBridge::Cleanup`** / **`EmergencyTrustedZoneWipe`** 对齐：清空进程内呼叫态，避免再次 **`Initialize`** 后残留 **callId**。
+        m_mediaCallCoordinator.ClearAll();
+        m_rtcCallManager.ClearAll();
+        m_rtcCallSessionManager.ClearAll();
         m_initialized = false;
     }
 
@@ -56,7 +63,6 @@ namespace ZChatIM::mm1 {
         m_certPinningManager.ResetPinningState();
         m_sessionActivityManager.ClearAllTrackedSessions();
         m_mentionPermissionManager.ClearAtAllRateLimitState();
-        m_rtcCallSessionManager.ClearAll();
         ClearMasterKey();
         m_securityMemory.ReleaseAllLockTracking();
         Cleanup();
@@ -146,22 +152,22 @@ namespace ZChatIM::mm1 {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
     }
 
-    bool MM1::ValidateJniCall(const void* jniEnv, const void* jclass)
+    bool MM1::ValidateJniCall(const void* jniEnv, const void* jcls)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        return m_jniSecurity.ValidateCall(jniEnv, jclass);
+        return m_jniSecurity.ValidateCall(jniEnv, jcls);
     }
 
-    std::string MM1::JniStringToString(const void* jniEnv, const void* jstring)
+    std::string MM1::JniStringToString(const void* jniEnv, const void* jstr)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        return m_jniSecurity.StringFromJni(jniEnv, jstring);
+        return m_jniSecurity.StringFromJni(jniEnv, jstr);
     }
 
-    std::vector<uint8_t> MM1::JniByteArrayToVector(const void* jniEnv, const void* jbyteArray)
+    std::vector<uint8_t> MM1::JniByteArrayToVector(const void* jniEnv, const void* jbytes)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        return m_jniSecurity.ByteArrayFromJni(jniEnv, jbyteArray);
+        return m_jniSecurity.ByteArrayFromJni(jniEnv, jbytes);
     }
 
     std::vector<uint8_t> MM1::GenerateMasterKey()
@@ -390,6 +396,24 @@ namespace ZChatIM::mm1 {
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
         return m_rtcCallSessionManager;
+    }
+
+    VoiceVideoCallManager& MM1::GetVoiceVideoCallManager()
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        return m_voiceVideoCallManager;
+    }
+
+    RtcCallManager& MM1::GetRtcCallManager()
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        return m_rtcCallManager;
+    }
+
+    MediaCallCoordinator& MM1::GetMediaCallCoordinator()
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        return m_mediaCallCoordinator;
     }
 
 } // namespace ZChatIM::mm1

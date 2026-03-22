@@ -1,6 +1,6 @@
 # 消息同步机制技术规范
 
-> **权威**：**`docs/README.md`**「冲突与权威」、**`03-Storage.md` 第七节**、**`05-ZChatIM-Implementation-Status.md`**。  
+> **权威**：**`docs/AUTHORITY.md`**、**`03-Storage.md` 第七节**、**`ZChatIM/docs/Implementation-Status.md`**。  
 > **本页**：**ZSP/同步协议与产品策略**；凡与 **「消息是否落盘」** 相关，**以 MM2 实现为准**。
 
 ## 一、设计原则
@@ -49,5 +49,5 @@ MM2: 存储层（当前实现）
 
 ## 六、容量
 
-- **产品目标**：单会话热缓存 100 条、全局 7 天等见 **`03-MessageCache.md`**（**与当前 MM2 持久化模块分离**）
+- **产品目标**：热缓存/LRU、全局 7 天等见 **`docs/AUTHORITY.md`**、**`04-Features/README.md`**（**与当前 MM2 RAM IM 分离**）
 - **磁盘容量**：受 **`ZDB_FILE_SIZE`、卷数、`ZDB_MAX_WRITE_SIZE`** 约束，见 **`03-Storage.md`** / **`04-ZdbBinaryLayout.md`**

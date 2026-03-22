@@ -15,6 +15,13 @@
       "projectTarget": "ZChatIM.exe",
       "name": "ZChatIM --test",
       "args": [ "--test" ]
+    },
+    {
+      "type": "default",
+      "project": "CMakeLists.txt",
+      "projectTarget": "ZChatIM.exe",
+      "name": "ZChatIM --test-im-1k",
+      "args": [ "--test-im-1k" ]
     }
   ]
 }
