@@ -53,6 +53,16 @@ namespace ZChatIM
     constexpr size_t SHA256_SIZE       = 32; // SHA-256哈希长度 (32字节)
     constexpr size_t BLOCK_ID_HASH_SIZE = 8; // 消息块ID哈希长度 (8字节)
 
+    // Auth 不透明凭证（token）最小字节数；与 `AuthSessionManager::VerifyCredential` 一致（服务端票据 / API key 级强度）。
+    constexpr size_t AUTH_OPAQUE_CREDENTIAL_MIN_BYTES = 32;
+
+    // 本地账户（**`LocalAccountCredentialManager`**）：口令与恢复密钥分别存 **mm1_user_kv**（须 **MM2::Initialize**）。
+    constexpr int32_t MM1_USER_KV_TYPE_LOCAL_PASSWORD_V1 = 0x4C504831; // ASCII "LPH1"
+    constexpr int32_t MM1_USER_KV_TYPE_LOCAL_RECOVERY_V1 = 0x4C524331; // ASCII "LRC1"
+    constexpr size_t LOCAL_ACCOUNT_PASSWORD_MIN_UTF8_BYTES             = 8;
+    constexpr size_t LOCAL_ACCOUNT_PASSWORD_MAX_UTF8_BYTES             = 512;
+    constexpr int    LOCAL_ACCOUNT_PBKDF2_ITERATIONS                   = 200'000;
+
     // =============================================================
     // 魔术数定义
     // =============================================================

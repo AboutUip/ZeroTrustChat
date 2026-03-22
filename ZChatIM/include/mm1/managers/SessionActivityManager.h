@@ -1,6 +1,6 @@
 #pragma once
 
-// 即时通讯会话通道活跃时间（lastActive / idle 超时）。
+// 即时通讯会话通道活跃时间（lastActive / idle 超时）。**持久化**：**`mm1_im_session_activity`**（经 **`MM2`**；须 **`MM2::Initialize`**）。
 // 对应 JNI 的 imSessionId（16 字节）；与 ZSP Header 4 字节 SessionID 无关。参见 docs/03-Business/04-Session.md。
 
 #include <cstdint>
@@ -32,6 +32,8 @@ namespace ZChatIM
             bool GetSessionStatus(const std::vector<uint8_t>& sessionId) const;
 
             void CleanupExpiredSessions(uint64_t nowMs);
+
+            void ClearAllTrackedSessions();
 
         private:
             struct Impl;

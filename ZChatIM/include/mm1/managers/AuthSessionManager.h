@@ -37,6 +37,26 @@ namespace ZChatIM
 
             bool DestroySession(const std::vector<uint8_t>& sessionId);
 
+            // 清空全部认证会话及限流/封禁内存态（**进程内**）。供 **`JniBridge::EmergencyWipe`** 等；**不**持久化。
+            void ClearAllSessions();
+
+            // --- 供 **`LocalAccountCredentialManager`**：与 **`Auth`** 同源限流/封禁，在口令校验前后分段调用 ---
+            bool ConsumeAuthAttemptSlot(
+                const std::vector<uint8_t>& userId,
+                const std::vector<uint8_t>& clientIp = {});
+
+            void OnAuthIdentityCheckFailed(
+                const std::vector<uint8_t>& userId,
+                const std::vector<uint8_t>& clientIp = {});
+
+            std::vector<uint8_t> FinalizeAuthSuccess(
+                const std::vector<uint8_t>& userId,
+                const std::vector<uint8_t>& clientIp = {});
+
+            void ClearAuthThrottleSuccess(
+                const std::vector<uint8_t>& userId,
+                const std::vector<uint8_t>& clientIp = {});
+
         private:
             struct Impl;
             std::unique_ptr<Impl> impl_;

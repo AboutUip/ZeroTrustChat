@@ -1,6 +1,6 @@
 # 消息撤回技术规范
 
-> **与当前 `ZChatIM` C++**：JNI 契约要求 **`deleteMessage` / `recallMessage`** 经 **`mm1::MessageRecallManager`**，**禁止**直调 **`MM2::DeleteMessage`**（见 **`docs/06-Appendix/01-JNI.md`** 路由摘要）。MM2 侧 **`DeleteMessage`** 为 **`ZdbManager::DeleteData` 清零** + SQLite **`DeleteMessageMetadataTransaction`**（非单文件「物理截断」）。下文「物理删除」指 **逻辑不可恢复 / 字节清零** 的产品语义。
+> **与当前 `ZChatIM` C++**：JNI 契约要求 **`deleteMessage` / `recallMessage`** 经 **`mm1::MessageRecallManager`**，**禁止**直调 **`MM2::DeleteMessage`**（见 **`docs/06-Appendix/01-JNI.md`** 路由摘要）。MM2 侧 **`DeleteMessage`** 为 **`ImRamEraseUnlocked`**（**RAM IM** 删除；**不**动文件分片 **`data_blocks`**）。下文「物理删除」指 **逻辑不可恢复** 的产品语义（IM **无**磁盘密文可覆写）。
 
 ## 一、撤回流程
 
@@ -48,7 +48,7 @@ Level 2 覆写:
 
 ## 五、安全保证
 
-- MM2：**.zdb 区间清零** + **`data_blocks`/`im_messages` 原子删行**（v1 **不收缩** `usedSize`；见 **`03-Storage.md` 第七节**）
+- MM2：**`DeleteMessage` → `ImRamEraseUnlocked`**（**RAM IM** 删除；**不**动文件分片的 **`data_blocks`**；见 **`03-Storage.md` 第七节**、**`05` 第8节**）
 - 索引与块一致（失败路径见 **`05-ZChatIM-Implementation-Status.md` 第8节**）
 - Level 2 覆写（MM1 内存与策略）
 - 强制撤回

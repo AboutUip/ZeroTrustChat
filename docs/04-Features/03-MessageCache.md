@@ -1,7 +1,7 @@
 # 消息缓存上限技术规范
 
-> **冲突处理（必读）**：**不得**将本页当作「当前 MM2 把消息只放内存」。**权威**见 **`docs/README.md`**「冲突与权威」、**`docs/02-Core/03-Storage.md` 第七节**、**`docs/02-Core/05-ZChatIM-Implementation-Status.md`**。  
-> **事实**：IM 消息经 **`StoreMessage`** **持久化**到 **`.zdb` + SQLite**；**无**独立「100 条 LRU **内存**缓存」模块与实现一致。
+> **冲突处理（必读）**：**权威**见 **`docs/README.md`**「冲突与权威」、**`docs/02-Core/03-Storage.md` 第2.6节 / 第七节**、**`docs/02-Core/05-ZChatIM-Implementation-Status.md`**。  
+> **事实**：IM 消息经 **`StoreMessage`** **仅驻留进程 RAM**（**`ImRam`**）；**无**独立「100 条 LRU」模块与实现一致；**进程重启后 IM 不保留**。
 
 ---
 
@@ -9,9 +9,9 @@
 
 | 维度 | **当前 ZChatIM C++** | **产品目标（下文 第二至四节）** |
 |------|----------------------|------------------------------|
-| 消息存储 | **磁盘密文 + 索引** | 可叠加 **热缓存**（未单独实现） |
-| 未读 LRU / 已读标记 | **`MM2::MarkMessageRead` / `GetUnreadSessionMessages` 已实现**（**`im_messages.read_at_ms`**）；**`MessageQueryManager` 未封装**（走 MM2 或后续 JNI） | 未读淘汰、已读不参与淘汰（产品层） |
-| 进程重启 | **消息仍在磁盘**（除非删目录 / `CleanupAllData`） | 若仅有内存缓存则会丢——**不适用于当前客户端** |
+| 消息存储 | **RAM 密文 + 内存索引** | 可叠加 **磁盘持久化 / 热缓存**（未作为默认 IM 路径实现） |
+| 未读 LRU / 已读标记 | **`MM2::MarkMessageRead` / `GetUnreadSessionMessages` 已实现**（**RAM `read_at_ms` 语义**）；**`MessageQueryManager` 未封装**（走 MM2 或后续 JNI） | 未读淘汰、已读不参与淘汰（产品层） |
+| 进程重启 | **IM 丢失**（**RAM**）；**文件分片等**仍可能在 **`.zdb`/元库** | 若产品要「重启保留聊天」须**另选持久化策略**（非当前默认） |
 
 ---
 

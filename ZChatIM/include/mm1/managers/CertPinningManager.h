@@ -32,6 +32,9 @@ namespace ZChatIM {
 
             // ClearBan: 管理员手动解除封禁
             void ClearBan(const std::vector<uint8_t>& clientId);
+
+            // 清空 Pin 配置、失败计数与封禁（**`MM2` → `mm1_cert_pin_*`**；**`MM2` 未初始化** 时为 no-op）；供 **`EmergencyTrustedZoneWipe`** 等。
+            void ResetPinningState();
         };
     } // namespace mm1
 } // namespace ZChatIM

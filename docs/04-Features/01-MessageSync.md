@@ -6,7 +6,7 @@
 ## 一、设计原则
 
 - 无离线/在线消息之别（协议面）
-- **客户端 MM2**：**`StoreMessage`** 后消息在 **`.zdb` + SQLite**，**进程重启不丢**（除非清理数据目录或 **`CleanupAllData`**）
+- **客户端 MM2**：**`StoreMessage`** 后 IM 密文在 **进程 RAM（ImRam）**，**进程重启不保留**；**`.zdb` + 元库** 承载**文件分片 / 群友元数据等**（除非清理数据目录或 **`CleanupAllData`**）
 - **MM1 会话**：**内存**，重启须 **重新认证**；与上条 **并存**，勿混写「重启消息全丢」
 - **服务端/网关** 若为纯内存队列，须在部署文档中**单独声明**；**不得**当作本仓库默认
 
@@ -17,7 +17,7 @@ MM1: 索引层（认证、会话等）
      └── MessageID → {MM2 定位, KeyID, Timestamp}（概念）
 
 MM2: 存储层（当前实现）
-     └── .zdb 尾部追加 opaque 块 + SQLite 索引；消息体为 AES-GCM 密文包（Windows）
+     └── **IM**：AES-GCM 密文包 **仅 RAM**；**文件分片等**：**.zdb** 追加 + **`data_blocks`/`zdb_files`** 等元库索引（**`user_version=11`**，**无** `im_messages`）
 ```
 
 ## 三、同步流程

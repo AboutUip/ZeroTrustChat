@@ -10,14 +10,14 @@ project(ZChatIM VERSION 1.0.0 LANGUAGES CXX C)
 # =========================
 # Options
 # =========================
-# 元数据索引 **`zchatim_metadata.db`**：默认 **SQLCipher**（页级加密 + 固定「严格」PRAGMA，见 `docs/02-Core/03-Storage.md` §4.2）。
+# 元数据索引 **`zchatim_metadata.db`**：默认 **SQLCipher**（页级加密 + 固定「严格」PRAGMA，见 `docs/02-Core/03-Storage.md` 第4.2节）。
 # 关闭则回退 **`thirdparty/sqlite/sqlite3.c`** 明文库（仅建议本地调试）。
 option(ZCHATIM_USE_SQLCIPHER "Link SQLCipher for encrypted metadata SQLite (see docs)" ON)
 option(ZCHATIM_BUILD_JNI "Build JNI shared library" ON)
 option(ZCHATIM_BUILD_EXE "Build console executable" ON)
-# Default OFF：不编译 tests/*.cpp，减小可执行体积、缩短链接时间；**`--test*`** 会提示未编入（见 main.cpp）。
-# ON：追加 tests/*.cpp 进 ZChatIM.exe，**`--test`** 跑全量。
-option(ZCHATIM_BUILD_TESTS "Compile in-tree tests into ZChatIM.exe" OFF)
+# Default ON：编译 tests/*.cpp 进 ZChatIM.exe（**`--test`** 跑全量）。
+# OFF：仅 main.cpp；**`--test*`** 会提示未编入测试（见 main.cpp）。
+option(ZCHATIM_BUILD_TESTS "Compile in-tree tests into ZChatIM.exe" ON)
 
 # 密码学后端（**全平台 OpenSSL 3**）：
 # - **MM2 `Crypto.cpp`**：**EVP_aes_256_gcm** / **PKCS5_PBKDF2_HMAC** / **RAND_bytes**。
@@ -182,6 +182,8 @@ add_library(ZChatIMCore STATIC
     src/mm1/MM1.cpp
     src/mm1/MM1_security_submodules.cpp
     src/mm1/managers/AuthSessionManager.cpp
+    src/mm1/managers/LocalAccountCredentialManager.cpp
+    src/mm1/managers/RtcCallSessionManager.cpp
     src/mm1/managers/MessageReplyManager.cpp
     src/mm1/managers/MessageRecallManager.cpp
     src/mm1/managers/UserDataManager.cpp
@@ -189,12 +191,17 @@ add_library(ZChatIMCore STATIC
     src/mm1/managers/GroupManager.cpp
     src/mm1/managers/GroupNameManager.cpp
     src/mm1/managers/GroupMuteManager.cpp
+    src/mm1/managers/MessageEditManager.cpp
+    src/mm1/managers/MentionPermissionManager.cpp
+    src/mm1/managers/FriendNoteManager.cpp
+    src/mm1/managers/AccountDeleteManager.cpp
     src/mm1/managers/FriendVerificationManager.cpp
     src/mm1/managers/MM1_manager_stubs.cpp
     src/mm1/managers/SessionActivityManager.cpp
     src/jni/JniBridge.cpp
     src/jni/JniInterface.cpp
     src/mm2/MM2.cpp
+    src/mm2/MM2_message_key_passphrase.cpp
     src/mm2/crypto/Sha256.cpp
     src/mm2/storage/Crypto.cpp
     src/mm2/storage/BlockIndex.cpp

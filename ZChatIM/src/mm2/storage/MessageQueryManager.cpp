@@ -1,4 +1,4 @@
-// MessageQueryManager：委托 MM2（`GetSessionMessages` / SQLite 游标 + `RetrieveMessage`），编码见 `MessageQueryManager.h`。
+// MessageQueryManager：委托 MM2（**RAM IM** 列表 + `RetrieveMessage`），编码见 `MessageQueryManager.h`。
 
 #include "mm2/storage/MessageQueryManager.h"
 #include "mm2/MM2.h"

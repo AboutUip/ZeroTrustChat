@@ -1,5 +1,6 @@
 #include "mm1/managers/AuthSessionManager.h"
 #include "Types.h"
+#include "common/Memory.h"
 #include "common/OpenSsl3Required.h"
 
 #include <array>
@@ -182,11 +183,30 @@ namespace ZChatIM::mm1 {
             return token.size() >= kMinTokenBytes && token.size() <= kMaxTokenBytes;
         }
 
-        // 占位：上线前须替换为真实凭证校验；返回 false 时会计入封禁失败次数。
+        bool TokenAllZero(const std::vector<uint8_t>& token)
+        {
+            for (uint8_t b : token) {
+                if (b != 0) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // 最高安全默认：不透明凭证须达到最小长度且非退化；与服务器签发的票据 / MAC 载荷对齐（见 docs/03-Business/02-Auth.md）。
+        // 若产品为 JWT/HMAC，应在 token 内携带完整二进制（≥ AUTH_OPAQUE_CREDENTIAL_MIN_BYTES）。
         bool VerifyCredential(const std::vector<uint8_t>& userId, const std::vector<uint8_t>& token)
         {
-            (void)userId;
-            (void)token;
+            if (token.size() < AUTH_OPAQUE_CREDENTIAL_MIN_BYTES || token.size() > kMaxTokenBytes) {
+                return false;
+            }
+            if (TokenAllZero(token)) {
+                return false;
+            }
+            if (token.size() == userId.size()
+                && common::Memory::ConstantTimeCompare(token.data(), userId.data(), userId.size())) {
+                return false;
+            }
             return true;
         }
 
@@ -401,6 +421,152 @@ namespace ZChatIM::mm1 {
         impl_->sessions.erase(it);
         SecureZeroSessionEntry(dead);
         return true;
+    }
+
+    bool AuthSessionManager::ConsumeAuthAttemptSlot(
+        const std::vector<uint8_t>& userId,
+        const std::vector<uint8_t>& clientIp)
+    {
+        if (!impl_) {
+            return false;
+        }
+        if (userId.size() != USER_ID_SIZE) {
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+
+        const uint64_t nowMs                    = SystemUnixEpochMs();
+        const std::vector<uint8_t> principalKey = PrincipalKey(userId, clientIp);
+
+        const auto banIt = impl_->banByPrincipal.find(principalKey);
+        if (banIt != impl_->banByPrincipal.end()) {
+            PruneDequeOlderThan(banIt->second.failTimesWithinWindow, nowMs, kBanFailWindowMs);
+            if (banIt->second.bannedUntilMs != 0 && nowMs >= banIt->second.bannedUntilMs) {
+                banIt->second.bannedUntilMs = 0;
+            }
+            if (banIt->second.bannedUntilMs != 0 && nowMs < banIt->second.bannedUntilMs) {
+                return false;
+            }
+        }
+
+        std::deque<uint64_t>& userQ = impl_->authAttemptsByUser[userId];
+        PruneDequeOlderThan(userQ, nowMs, kUserAuthWindowMs);
+        if (userQ.size() >= kUserAuthMaxPerMin) {
+            return false;
+        }
+
+        std::deque<uint64_t>* ipQPtr = nullptr;
+        if (!clientIp.empty()) {
+            std::deque<uint64_t>& ipQ = impl_->authAttemptsByIp[clientIp];
+            ipQPtr                    = &ipQ;
+            PruneDequeOlderThan(ipQ, nowMs, kIpAuthWindowMs);
+            if (ipQ.size() >= kIpAuthMaxPerMin) {
+                return false;
+            }
+        }
+
+        userQ.push_back(nowMs);
+        if (ipQPtr != nullptr) {
+            ipQPtr->push_back(nowMs);
+        }
+        return true;
+    }
+
+    void AuthSessionManager::OnAuthIdentityCheckFailed(
+        const std::vector<uint8_t>& userId,
+        const std::vector<uint8_t>& clientIp)
+    {
+        if (!impl_ || userId.size() != USER_ID_SIZE) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        RecordAuthFailure(
+            impl_->banByPrincipal,
+            PrincipalKey(userId, clientIp),
+            SystemUnixEpochMs());
+    }
+
+    std::vector<uint8_t> AuthSessionManager::FinalizeAuthSuccess(
+        const std::vector<uint8_t>& userId,
+        const std::vector<uint8_t>& clientIp)
+    {
+        std::vector<uint8_t> empty;
+        if (!impl_ || userId.size() != USER_ID_SIZE) {
+            return empty;
+        }
+
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+
+        auto popLastAttempt = [&]() {
+            std::deque<uint64_t>& uq = impl_->authAttemptsByUser[userId];
+            if (!uq.empty()) {
+                uq.pop_back();
+            }
+            if (!clientIp.empty()) {
+                std::deque<uint64_t>& iq = impl_->authAttemptsByIp[clientIp];
+                if (!iq.empty()) {
+                    iq.pop_back();
+                }
+            }
+        };
+
+        if (impl_->sessions.size() >= kMaxActiveSessions) {
+            popLastAttempt();
+            return empty;
+        }
+
+        std::vector<uint8_t> sid;
+        if (!GenerateUniqueSessionId(impl_->sessions, sid)) {
+            popLastAttempt();
+            return empty;
+        }
+
+        SessionEntry entry{};
+        std::memcpy(entry.userId.data(), userId.data(), USER_ID_SIZE);
+        entry.expiresAt = std::chrono::steady_clock::now() + kDefaultSessionTtl;
+
+        const std::vector<uint8_t> sessionIdCopy = sid;
+        impl_->sessions.emplace(std::move(sid), std::move(entry));
+
+        const std::vector<uint8_t> principalKey = PrincipalKey(userId, clientIp);
+        impl_->banByPrincipal.erase(principalKey);
+        impl_->authAttemptsByUser[userId].clear();
+        if (!clientIp.empty()) {
+            impl_->authAttemptsByIp[clientIp].clear();
+        }
+
+        return sessionIdCopy;
+    }
+
+    void AuthSessionManager::ClearAuthThrottleSuccess(
+        const std::vector<uint8_t>& userId,
+        const std::vector<uint8_t>& clientIp)
+    {
+        if (!impl_ || userId.size() != USER_ID_SIZE) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        impl_->banByPrincipal.erase(PrincipalKey(userId, clientIp));
+        impl_->authAttemptsByUser[userId].clear();
+        if (!clientIp.empty()) {
+            impl_->authAttemptsByIp[clientIp].clear();
+        }
+    }
+
+    void AuthSessionManager::ClearAllSessions()
+    {
+        if (!impl_) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        for (auto& pr : impl_->sessions) {
+            SecureZeroSessionEntry(pr.second);
+        }
+        impl_->sessions.clear();
+        impl_->authAttemptsByUser.clear();
+        impl_->authAttemptsByIp.clear();
+        impl_->banByPrincipal.clear();
     }
 
 } // namespace ZChatIM::mm1

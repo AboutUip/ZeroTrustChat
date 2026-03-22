@@ -12,6 +12,14 @@ namespace ZChatIM::jni {
         return JniBridge::Instance().Initialize(dataDir, indexDir);
     }
 
+    bool JniInterface::InitializeWithPassphrase(
+        const std::string& dataDir,
+        const std::string& indexDir,
+        const char*        messageKeyPassphraseUtf8)
+    {
+        return JniBridge::Instance().Initialize(dataDir, indexDir, messageKeyPassphraseUtf8);
+    }
+
     void JniInterface::Cleanup()
     {
         JniBridge::Instance().Cleanup();
@@ -74,6 +82,19 @@ namespace ZChatIM::jni {
     ZCHATIM_JNI_FWD3(std::vector<uint8_t>, Auth, const std::vector<uint8_t>&, userId, const std::vector<uint8_t>&, token, const std::vector<uint8_t>&, clientIp)
     ZCHATIM_JNI_FWD1(bool, VerifySession, const std::vector<uint8_t>&, sessionId)
     ZCHATIM_JNI_FWD2(bool, DestroySession, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, sessionIdToDestroy)
+
+    ZCHATIM_JNI_FWD3(bool, RegisterLocalUser, const std::vector<uint8_t>&, userId, const std::vector<uint8_t>&, passwordUtf8, const std::vector<uint8_t>&, recoverySecretUtf8)
+    ZCHATIM_JNI_FWD3(std::vector<uint8_t>, AuthWithLocalPassword, const std::vector<uint8_t>&, userId, const std::vector<uint8_t>&, passwordUtf8, const std::vector<uint8_t>&, clientIp)
+    ZCHATIM_JNI_FWD1(bool, HasLocalPassword, const std::vector<uint8_t>&, userId)
+    ZCHATIM_JNI_FWD4(bool, ChangeLocalPassword, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, userId, const std::vector<uint8_t>&, oldPasswordUtf8, const std::vector<uint8_t>&, newPasswordUtf8)
+    ZCHATIM_JNI_FWD4(bool, ResetLocalPasswordWithRecovery, const std::vector<uint8_t>&, userId, const std::vector<uint8_t>&, recoverySecretUtf8, const std::vector<uint8_t>&, newPasswordUtf8, const std::vector<uint8_t>&, clientIp)
+
+    ZCHATIM_JNI_FWD3(std::vector<uint8_t>, RtcStartCall, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, peerUserId, int32_t, callKind)
+    ZCHATIM_JNI_FWD2(bool, RtcAcceptCall, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, callId)
+    ZCHATIM_JNI_FWD2(bool, RtcRejectCall, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, callId)
+    ZCHATIM_JNI_FWD2(bool, RtcEndCall, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, callId)
+    ZCHATIM_JNI_FWD2(int32_t, RtcGetCallState, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, callId)
+    ZCHATIM_JNI_FWD2(int32_t, RtcGetCallKind, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, callId)
 
     ZCHATIM_JNI_FWD3(std::vector<uint8_t>, StoreMessage, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, imSessionId, const std::vector<uint8_t>&, payload)
     ZCHATIM_JNI_FWD2(std::vector<uint8_t>, RetrieveMessage, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, messageId)

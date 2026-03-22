@@ -141,6 +141,25 @@ extern "C" {
             ZChatIM::jni::JniInterface::Initialize(JString(env, dataDir), JString(env, indexDir)));
     }
 
+    JNIEXPORT jboolean JNICALL
+    n_initializeWithPassphrase(JNIEnv* env, jclass, jstring dataDir, jstring indexDir, jstring passphrase)
+    {
+        const std::string dd = JString(env, dataDir);
+        const std::string id = JString(env, indexDir);
+        const char*       p  = nullptr;
+        if (passphrase != nullptr) {
+            p = env->GetStringUTFChars(passphrase, nullptr);
+            if (p == nullptr) {
+                return JNI_FALSE;
+            }
+        }
+        const bool ok = ZChatIM::jni::JniInterface::InitializeWithPassphrase(dd, id, p);
+        if (p != nullptr) {
+            env->ReleaseStringUTFChars(passphrase, p);
+        }
+        return static_cast<jboolean>(ok);
+    }
+
     ZCHAT_JNI n_cleanup(JNIEnv* env, jclass)
     {
         (void)env;
@@ -168,6 +187,111 @@ extern "C" {
         (void)env;
         return static_cast<jboolean>(
             ZChatIM::jni::JniInterface::DestroySession(JBytes(env, caller), JBytes(env, target)));
+    }
+
+    JNIEXPORT jboolean JNICALL
+    n_registerLocalUser(JNIEnv* env, jclass, jbyteArray userId, jbyteArray pwd, jbyteArray recovery)
+    {
+        (void)env;
+        return static_cast<jboolean>(ZChatIM::jni::JniInterface::RegisterLocalUser(
+            JBytes(env, userId),
+            JBytes(env, pwd),
+            JBytes(env, recovery)));
+    }
+
+    JNIEXPORT jbyteArray JNICALL
+    n_authWithLocalPassword(JNIEnv* env, jclass, jbyteArray userId, jbyteArray pwd, jbyteArray clientIp)
+    {
+        return ToJBytesOrNull(
+            env,
+            ZChatIM::jni::JniInterface::AuthWithLocalPassword(
+                JBytes(env, userId),
+                JBytes(env, pwd),
+                JBytes(env, clientIp)));
+    }
+
+    JNIEXPORT jboolean JNICALL
+    n_hasLocalPassword(JNIEnv* env, jclass, jbyteArray userId)
+    {
+        (void)env;
+        return static_cast<jboolean>(ZChatIM::jni::JniInterface::HasLocalPassword(JBytes(env, userId)));
+    }
+
+    JNIEXPORT jboolean JNICALL
+    n_changeLocalPassword(
+        JNIEnv* env, jclass, jbyteArray caller, jbyteArray userId, jbyteArray oldPwd, jbyteArray newPwd)
+    {
+        (void)env;
+        return static_cast<jboolean>(ZChatIM::jni::JniInterface::ChangeLocalPassword(
+            JBytes(env, caller),
+            JBytes(env, userId),
+            JBytes(env, oldPwd),
+            JBytes(env, newPwd)));
+    }
+
+    JNIEXPORT jboolean JNICALL
+    n_resetLocalPasswordWithRecovery(
+        JNIEnv* env, jclass, jbyteArray userId, jbyteArray recovery, jbyteArray newPwd, jbyteArray clientIp)
+    {
+        (void)env;
+        return static_cast<jboolean>(ZChatIM::jni::JniInterface::ResetLocalPasswordWithRecovery(
+            JBytes(env, userId),
+            JBytes(env, recovery),
+            JBytes(env, newPwd),
+            JBytes(env, clientIp)));
+    }
+
+    JNIEXPORT jbyteArray JNICALL
+    n_rtcStartCall(JNIEnv* env, jclass, jbyteArray caller, jbyteArray peer, jint callKind)
+    {
+        return ToJBytesOrNull(
+            env,
+            ZChatIM::jni::JniInterface::RtcStartCall(
+                JBytes(env, caller),
+                JBytes(env, peer),
+                static_cast<int32_t>(callKind)));
+    }
+
+    JNIEXPORT jboolean JNICALL
+    n_rtcAcceptCall(JNIEnv* env, jclass, jbyteArray caller, jbyteArray callId)
+    {
+        (void)env;
+        return static_cast<jboolean>(
+            ZChatIM::jni::JniInterface::RtcAcceptCall(JBytes(env, caller), JBytes(env, callId)));
+    }
+
+    JNIEXPORT jboolean JNICALL
+    n_rtcRejectCall(JNIEnv* env, jclass, jbyteArray caller, jbyteArray callId)
+    {
+        (void)env;
+        return static_cast<jboolean>(
+            ZChatIM::jni::JniInterface::RtcRejectCall(JBytes(env, caller), JBytes(env, callId)));
+    }
+
+    JNIEXPORT jboolean JNICALL
+    n_rtcEndCall(JNIEnv* env, jclass, jbyteArray caller, jbyteArray callId)
+    {
+        (void)env;
+        return static_cast<jboolean>(
+            ZChatIM::jni::JniInterface::RtcEndCall(JBytes(env, caller), JBytes(env, callId)));
+    }
+
+    JNIEXPORT jint JNICALL
+    n_rtcGetCallState(JNIEnv* env, jclass, jbyteArray caller, jbyteArray callId)
+    {
+        (void)env;
+        return static_cast<jint>(ZChatIM::jni::JniInterface::RtcGetCallState(
+            JBytes(env, caller),
+            JBytes(env, callId)));
+    }
+
+    JNIEXPORT jint JNICALL
+    n_rtcGetCallKind(JNIEnv* env, jclass, jbyteArray caller, jbyteArray callId)
+    {
+        (void)env;
+        return static_cast<jint>(ZChatIM::jni::JniInterface::RtcGetCallKind(
+            JBytes(env, caller),
+            JBytes(env, callId)));
     }
 
     JNIEXPORT jbyteArray JNICALL
@@ -961,10 +1085,24 @@ extern "C" {
 
     static const JNINativeMethod kNativeMethods[] = {
         {"initialize", "(Ljava/lang/String;Ljava/lang/String;)Z", reinterpret_cast<void*>(n_initialize)},
+        {"initializeWithPassphrase",
+         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z",
+         reinterpret_cast<void*>(n_initializeWithPassphrase)},
         {"cleanup", "()V", reinterpret_cast<void*>(n_cleanup)},
         {"auth", "([B[B[B)[B", reinterpret_cast<void*>(n_auth)},
         {"verifySession", "([B)Z", reinterpret_cast<void*>(n_verifySession)},
         {"destroySession", "([B[B)Z", reinterpret_cast<void*>(n_destroySession)},
+        {"registerLocalUser", "([B[B[B)Z", reinterpret_cast<void*>(n_registerLocalUser)},
+        {"authWithLocalPassword", "([B[B[B)[B", reinterpret_cast<void*>(n_authWithLocalPassword)},
+        {"hasLocalPassword", "([B)Z", reinterpret_cast<void*>(n_hasLocalPassword)},
+        {"changeLocalPassword", "([B[B[B[B)Z", reinterpret_cast<void*>(n_changeLocalPassword)},
+        {"resetLocalPasswordWithRecovery", "([B[B[B[B)Z", reinterpret_cast<void*>(n_resetLocalPasswordWithRecovery)},
+        {"rtcStartCall", "([B[BI)[B", reinterpret_cast<void*>(n_rtcStartCall)},
+        {"rtcAcceptCall", "([B[B)Z", reinterpret_cast<void*>(n_rtcAcceptCall)},
+        {"rtcRejectCall", "([B[B)Z", reinterpret_cast<void*>(n_rtcRejectCall)},
+        {"rtcEndCall", "([B[B)Z", reinterpret_cast<void*>(n_rtcEndCall)},
+        {"rtcGetCallState", "([B[B)I", reinterpret_cast<void*>(n_rtcGetCallState)},
+        {"rtcGetCallKind", "([B[B)I", reinterpret_cast<void*>(n_rtcGetCallKind)},
         {"storeMessage", "([B[B[B)[B", reinterpret_cast<void*>(n_storeMessage)},
         {"retrieveMessage", "([B[B)[B", reinterpret_cast<void*>(n_retrieveMessage)},
         {"deleteMessage", "([B[B[B[B)Z", reinterpret_cast<void*>(n_deleteMessage)},

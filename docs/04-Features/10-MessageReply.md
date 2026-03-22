@@ -1,6 +1,6 @@
 # 消息回复技术规范
 
-> **实现状态**：**`MM2::StoreMessageReplyRelation` / `GetMessageReplyRelation` 已落 SQLite 表 `im_message_reply`**（**`SqliteMetadataDb` 元库当前 `user_version=5`**，见 **`03-Storage.md`**）。**`mm1::MessageReplyManager::StoreMessageReplyRelation`** 已实现：**`TryGetSessionUserId`** 会话绑定 + **`common::Ed25519VerifyDetached`**（**OpenSSL**；**canonical payload** 见 **`ZChatIM/docs/JNI-API-Documentation.md`**）+ **MM2** 落库；入参含 **`senderEd25519PublicKey`（32B）**。**JNI**：**`storeMessageReplyRelation` / `getMessageReplyRelation`** 已由 **`jni/JniNatives.cpp`** 接 **`JniBridge`**。下文为 **产品与 ZSP 目标**。  
+> **实现状态**：**`MM2::StoreMessageReplyRelation` / `GetMessageReplyRelation`** 落在 **MM2 进程内 RAM**（**`m_imRamReplies`**）。**元数据库**不含 **`im_message_reply` 表**；**`PRAGMA user_version=11`**。**`StoreMessageReplyRelation`** 另：**同会话**、**`repliedSenderId` 与父消息 RAM `senderUserId` 一致**；若 **`imSessionId`** 在 **`group_members`** 有行（群会话），则 **SQL** 校验 **回复作者** 与 **`repliedSenderId`** 均为该 **`group_id`** 成员。**`mm1::MessageReplyManager`**：**Ed25519** + **MM2**。**JNI**：**`storeMessageReplyRelation` / `getMessageReplyRelation`** 已接 **`JniBridge`**。下文为 **产品与 ZSP 目标**。  
 > **TLV**：**`Type = 0x10` `MessageReply`** 为 **载荷内 TLV**（**`02-ZSP-Protocol.md` 第7.2节**），**≠** **MessageType `0x10` `GROUP_UPDATE`**（第五节）。
 
 ## 一、回复流程

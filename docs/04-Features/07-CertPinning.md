@@ -2,7 +2,7 @@
 
 > **文档类型**：**TLS 公钥固定（Pinning）** 与客户端封禁策略。  
 > **JNI 契约**：**`docs/06-Appendix/01-JNI.md`**「十、安全模块」——`ConfigurePinnedPublicKeyHashes`、`VerifyPinnedServerCertificate`、`IsClientBanned`、`RecordFailure`、`ClearBan` 等。  
-> **实现状态**：**`JniBridge` + JNI** 已路由 **`CertPinningManager`**（**`MM1_manager_stubs.cpp`** 内**最小内存实现**：配置 pin、比对 SPKI SHA-256、失败计数/封禁）；**`caller` 可为空** 的路径仅当策略可证明等价来源（见 **`JniSecurityPolicy.h`**）。**TLS 握手提取 SPKI** 仍属集成方责任。
+> **实现状态**：**`JniBridge` + JNI** 已路由 **`CertPinningManager`**（**`MM1_manager_stubs.cpp`** → **`MM2` → `mm1_cert_pin_config` / `mm1_cert_pin_client`**，**`user_version=11`**；**进程重启可恢复** SPKI 配置与按 **`client_id`** 的失败/封禁，须 **`MM2::Initialize`**）；**`caller` 可为空** 的路径仅当策略可证明等价来源（见 **`JniSecurityPolicy.h`**）。**TLS 握手提取 SPKI** 仍属集成方责任。
 
 ---
 

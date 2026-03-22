@@ -4,6 +4,7 @@
 #include "mm1/MM1.h"
 
 #include "common/Memory.h"
+#include "mm2/MM2.h"
 #include "mm2/storage/Crypto.h"
 
 #include <cstring>
@@ -40,6 +41,36 @@ namespace ZChatIM::mm1 {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
         // Do not call mm2::Crypto::Cleanup here — MM2 owns global crypto lifetime.
         m_initialized = false;
+    }
+
+    void MM1::EmergencyTrustedZoneWipe()
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        mm2::MM2& m2 = mm2::MM2::Instance();
+        if (m2.IsInitialized()) {
+            (void)m2.CleanupAllData();
+        }
+        ClearAllAuthSessions();
+        m_deviceSessionManager.ClearAllRegistrations();
+        m_userStatusManager.ClearAll();
+        m_certPinningManager.ResetPinningState();
+        m_sessionActivityManager.ClearAllTrackedSessions();
+        m_mentionPermissionManager.ClearAtAllRateLimitState();
+        m_rtcCallSessionManager.ClearAll();
+        ClearMasterKey();
+        m_securityMemory.ReleaseAllLockTracking();
+        Cleanup();
+    }
+
+    std::map<std::string, std::string> MM1::SystemControlStatusSnapshot()
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        std::map<std::string, std::string> out;
+        out["mm1_initialized"]        = m_initialized ? "1" : "0";
+        out["mm1_master_key_present"] = m_keyManagement.GetMasterKey().empty() ? "0" : "1";
+        mm2::MM2& m2                  = mm2::MM2::Instance();
+        out["mm2_initialized"]        = m2.IsInitialized() ? "1" : "0";
+        return out;
     }
 
     void* MM1::AllocateSecureMemory(size_t size)
@@ -136,13 +167,41 @@ namespace ZChatIM::mm1 {
     std::vector<uint8_t> MM1::GenerateMasterKey()
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        return m_keyManagement.GenerateMasterKey();
+        std::vector<uint8_t> k = m_keyManagement.GenerateMasterKey();
+        if (!k.empty()) {
+            (void)m_keyManagement.StoreMasterKey(k);
+        }
+        return k;
+    }
+
+    bool MM1::HasMasterKey()
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        return !m_keyManagement.GetMasterKey().empty();
+    }
+
+    void MM1::ClearMasterKey()
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        m_keyManagement.ClearMasterKey();
+    }
+
+    std::vector<uint8_t> MM1::RefreshMasterKey()
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        return m_keyManagement.RefreshMasterKey();
     }
 
     std::vector<uint8_t> MM1::GenerateSessionKey()
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
         return m_keyManagement.GenerateSessionKey();
+    }
+
+    std::vector<uint8_t> MM1::RefreshSessionKey()
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        return m_keyManagement.RefreshSessionKey();
     }
 
     std::vector<uint8_t> MM1::DeriveKey(
@@ -205,6 +264,12 @@ namespace ZChatIM::mm1 {
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
         return m_authSessionManager;
+    }
+
+    void MM1::ClearAllAuthSessions()
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        m_authSessionManager.ClearAllSessions();
     }
 
     UserDataManager& MM1::GetUserDataManager()
@@ -313,6 +378,18 @@ namespace ZChatIM::mm1 {
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
         return m_messageReplyManager;
+    }
+
+    LocalAccountCredentialManager& MM1::GetLocalAccountCredentialManager()
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        return m_localAccountCredentialManager;
+    }
+
+    RtcCallSessionManager& MM1::GetRtcCallSessionManager()
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        return m_rtcCallSessionManager;
     }
 
 } // namespace ZChatIM::mm1

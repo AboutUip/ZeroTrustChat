@@ -1,8 +1,8 @@
 # 群组禁言技术规范
 
-> **文档类型**：**产品与 MM1 权限模型**；禁言状态**不**由 MM2 **`im_messages`** 表达。  
+> **文档类型**：**产品与 MM1 权限模型**；禁言状态由 **`mm2_group_mute`** 表达，**不**混在 **IM RAM** 消息行内。  
 > **JNI**：**`docs/06-Appendix/01-JNI.md`**「六、群聊安全特性」——`MuteMember`、`IsMuted`、`UnmuteMember`。  
-> **实现状态**：**`05-ZChatIM-Implementation-Status.md` 第3节** — **`mm1::GroupMuteManager`**（**`GroupMuteManager.cpp`**）已实现；持久化 **`MM2::SqliteMetadataDb`** 表 **`mm2_group_mute`**（**`user_version=6`**）；**JNI** 经 **`JniBridge`** 路由至该管理器（见 **`ZChatIM/docs/JNI-API-Documentation.md`**「GroupMute」）。  
+> **实现状态**：**`05-ZChatIM-Implementation-Status.md` 第3节** — **`mm1::GroupMuteManager`**（**`GroupMuteManager.cpp`**）已实现；持久化 **`MM2::SqliteMetadataDb`** 表 **`mm2_group_mute`**（元数据库正常 **`user_version=11`**；**`mm2_group_mute`** 表自 **v6** 引入，见 **`03-Storage.md` 第2.6节**）；**JNI** 经 **`JniBridge`** 路由至该管理器（见 **`ZChatIM/docs/JNI-API-Documentation.md`**「GroupMute」）。  
 > **ZSP**：禁言信令消息类型为 **`0x14` `GROUP_MUTE`**（**`02-ZSP-Protocol.md` 第五节**）。
 
 ## 一、禁言流程
@@ -52,7 +52,7 @@
 解禁方式:
 1. 手动解禁: 群主/管理员手动解除
 2. 自动解禁: 禁言时长到期（**`CleanupExpiredMutes` / `MM2::CleanupExpiredData`** 删除到期行）
-3. 退群: 产品层应视为禁言失效；**当前 C++ 本地库未**在退群时级联删 **`mm2_group_mute`**（可后续补强或依赖到期清理）
+3. 退群/踢人：**`MM2::DeleteGroupMemberForMm1`** 会先删 **`mm2_group_mute`** 再删 **`group_members`** 对应行（本地库已级联）
 ```
 
 ## 五、权限检查
@@ -65,7 +65,7 @@
 4. 未禁言 → 正常发送
 ```
 
-**与 MM2**：校验通过后客户端仍可调用 **`MM2::StoreMessage`**；**禁言须在 MM1/服务端拦截**，不可仅靠客户端。
+**与 MM2**：校验通过后客户端仍可调用 **`MM2::StoreMessage(sessionId, senderUserId, …)`**（**JNI `storeMessage`** 将 **`principal` 写入 `sender_user_id`**）；**禁言须在 MM1/服务端拦截**，不可仅靠客户端。
 
 ## 六、权限级别（与当前 C++ 一致）
 

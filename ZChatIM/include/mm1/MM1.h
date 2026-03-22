@@ -27,6 +27,9 @@
 #include "managers/MentionPermissionManager.h"
 #include "managers/MessageRecallManager.h"
 #include "managers/MessageReplyManager.h"
+#include "managers/LocalAccountCredentialManager.h"
+#include "managers/RtcCallSessionManager.h"
+#include <map>
 #include <vector>
 #include <string>
 #include <cstdint>
@@ -41,7 +44,7 @@ namespace ZChatIM
         // MM1 模块 - 安全内存框架
         // =============================================================
         //
-        // **与 MM2 的分工**（实现与 [05-ZChatIM-Implementation-Status.md](../../../docs/02-Core/05-ZChatIM-Implementation-Status.md) §3 对齐）：
+        // **与 MM2 的分工**（实现与 [05-ZChatIM-Implementation-Status.md](../../../docs/02-Core/05-ZChatIM-Implementation-Status.md) 第3节 对齐）：
         // - **MM1**：JNI 信任边界上的校验、会话与策略；安全内存/RNG/密钥门面；各 **Manager** 验签后再路由到 MM2。
         // - **MM2**：编排、SQLite/ZDB 持久化；**`mm2::Crypto::Init` / `Cleanup` 的生命周期由 MM2 持有**（`MM1::Cleanup` 不调用 `Crypto::Cleanup`）。
         //
@@ -54,6 +57,10 @@ namespace ZChatIM
             friend class GroupManager;
             friend class GroupNameManager;
             friend class GroupMuteManager;
+            friend class AccountDeleteManager;
+            friend class FriendNoteManager;
+            friend class MentionPermissionManager;
+            friend class MessageEditManager;
 
         public:
             // =============================================================
@@ -72,6 +79,12 @@ namespace ZChatIM
             
             // 清理
             void Cleanup();
+
+            // 可信区紧急擦除：**MM2::CleanupAllData**（若已初始化）+ 认证/多设备/在线/Pin/IM 活跃/@ALL 限速等 **MM1 进程内态** + **ClearMasterKey** + **Cleanup**。**不**修改 **JniBridge::m_initialized**（须由 **JniBridge::EmergencyWipe** 或 **Cleanup** 同步）。
+            void EmergencyTrustedZoneWipe();
+
+            // 供 **SystemControl::GetStatus** 等：无敏感载荷的进程内快照。
+            std::map<std::string, std::string> SystemControlStatusSnapshot();
             
             // =============================================================
             // 安全内存操作
@@ -139,11 +152,17 @@ namespace ZChatIM
             // 密钥管理
             // =============================================================
             
-            // 生成主密钥
+            // 生成主密钥并写入 KeyManagement 进程内槽（与 HasMasterKey / JNI getStatus 一致）
             std::vector<uint8_t> GenerateMasterKey();
+
+            // 以下在 MM1 递归锁内访问 KeyManagement，供 JNI 等避免「GetKeyManagement() 返回后失锁」竞态
+            bool                HasMasterKey();
+            void                ClearMasterKey();
+            std::vector<uint8_t> RefreshMasterKey();
             
-            // 生成会话密钥
+            // 生成/刷新会话密钥（同上，须经本类方法；勿 GetKeyManagement() 返回后再调）
             std::vector<uint8_t> GenerateSessionKey();
+            std::vector<uint8_t> RefreshSessionKey();
             
             // 派生密钥
             std::vector<uint8_t> DeriveKey(const std::vector<uint8_t>& inputKey, const std::vector<uint8_t>& salt);
@@ -175,6 +194,9 @@ namespace ZChatIM
             // 上层管理器契约（用于对齐文档闭环）
             // =============================================================
             AuthSessionManager& GetAuthSessionManager();
+            // 在 MM1 锁内清空 AuthSessionManager 会话表及限流/封禁（供 JniBridge::EmergencyWipe 等）
+            void ClearAllAuthSessions();
+
             UserDataManager& GetUserDataManager();
             FriendManager& GetFriendManager();
             GroupManager& GetGroupManager();
@@ -197,6 +219,9 @@ namespace ZChatIM
             MentionPermissionManager& GetMentionPermissionManager();
             MessageRecallManager& GetMessageRecallManager();
             MessageReplyManager& GetMessageReplyManager();
+
+            LocalAccountCredentialManager& GetLocalAccountCredentialManager();
+            RtcCallSessionManager& GetRtcCallSessionManager();
             
         private:
             // 禁止实例化
@@ -232,6 +257,9 @@ namespace ZChatIM
             MentionPermissionManager m_mentionPermissionManager;
             MessageRecallManager m_messageRecallManager;
             MessageReplyManager m_messageReplyManager;
+
+            LocalAccountCredentialManager m_localAccountCredentialManager;
+            RtcCallSessionManager m_rtcCallSessionManager;
             
             // 子模块
             security::SecurityMemory m_securityMemory;

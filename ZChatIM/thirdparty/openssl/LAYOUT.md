@@ -28,7 +28,7 @@ thirdparty/openssl/builds/windows-x64/
   README.md
   openssl-src/            ← 可选：解压的源码（可不提交）
   openssl-build/          ← 可选：nmake 的工作目录
-  install/                ← 推荐：与 §1 相同结构（可整棵复制到 prebuilt/.../openssl）
+  install/                ← 推荐：与 第1节 相同结构（可整棵复制到 prebuilt/.../openssl）
 ```
 
 CMake **默认不**扫描 `builds/` 子路径；完成后请把 **`install/`** 再**复制**到 **`prebuilt/windows-x64/openssl/`**，或设 **`OPENSSL_ROOT_DIR`** 指向 **`install/`**。

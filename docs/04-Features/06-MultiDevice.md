@@ -2,7 +2,7 @@
 
 > **文档类型**：**产品与 MM1 会话模型**；与 **MM2 消息落盘** 独立（多设备均可读同一用户本地库或各自客户端库，部署相关）。  
 > **权威**：**`docs/03-Business/04-Session.md`**（idle/心跳）；JNI 契约 **`docs/06-Appendix/01-JNI.md`**「八、会话与多设备」。  
-> **实现状态**：**`05-ZChatIM-Implementation-Status.md` 第3节**：**JNI** **`registerDeviceSession` / `getDeviceSessions` 等** 已接 **`JniBridge` + `jni/JniNatives.cpp`**；**`DeviceSessionManager`** 当前为 **进程内内存实现**（**`MM1_manager_stubs.cpp`**），**非**持久化/集群级产品形态。
+> **实现状态**：**`05-ZChatIM-Implementation-Status.md` 第3节**：**JNI** **`registerDeviceSession` / `getDeviceSessions` 等** 已接 **`JniBridge` + `jni/JniNatives.cpp`**；**`DeviceSessionManager`** 经 **`MM2` → `SqliteMetadataDb`** 写入 **`mm1_device_sessions`**（**`user_version=11`**），**同一 `indexDir` 元库**下 **进程重启可恢复**（须 **`MM2::Initialize`** 成功；**`EmergencyWipe`/`CleanupAllData`** 删库即清空）。**服务端**仍为设备列表/踢设备**权威**；本地表**不**构成集群级或多端同步真相源。
 
 ---
 
@@ -10,7 +10,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  MM1 设备会话表（目标模型）                                    │
+│  MM1 设备会话（`mm1_device_sessions` + ≤2 设备逻辑）            │
 ├─────────────────────────────────────────────────────────────┤
 │  userId → vector<sessionId, deviceId, loginTime>            │
 │  最大2个设备                                                  │
@@ -72,7 +72,8 @@
 |------|-----|
 | 最大设备数 | 2 |
 | 踢下线策略 | 强制踢掉最早登录 |
-| 存储位置 | **MM1 内存**（目标）；进程重启丢失，须重登 |
+| 存储位置 | **MM1 内存**；进程重启丢失，须重登 |
+| 过期清理 | **`CleanupExpiredDeviceSessions`**：剔除 **`lastActiveMs` 早于 30 分钟 idle** 的登记（与 **`04-Session.md`** idle 口径一致；**`DeviceSessionManager::CleanupExpiredSessions`**） |
 | 销毁级别 | Level 2 |
 
 ---

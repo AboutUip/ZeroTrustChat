@@ -27,14 +27,15 @@ namespace ZChatIM {
             // `count <= 0` 返回空。
             std::vector<std::vector<uint8_t>> ListMessages(const std::vector<uint8_t>& userId, int count);
 
-            // **`im_messages` 无服务器时间列**：**`count<=0`** 时返回空且不改 **`LastError`**；**`count>0`** 时返回空并 **`MM2::LastError`** 写明不支持（须 **`Initialize`** 且 **`sessionId`** 为 16 字节，否则先报对应错误）。
+            // 按 **进程内 RAM** 每条消息的 **`stored_at_ms`**（**`StoreMessage` 写入时**）**`>= sinceTimestampMs`** 取最多 **`count`** 条（**插入序**内过滤，与历史 SQLite **`stored_at_ms ASC, rowid ASC`** 语义对齐）。
+            // **`count<=0`** 返回空；须 **`Initialize`** 且 **`userId`/`sessionId`** 为 16 字节。
             std::vector<std::vector<uint8_t>> ListMessagesSinceTimestamp(
                 const std::vector<uint8_t>& userId,
                 uint64_t sinceTimestampMs,
                 int count);
 
-            // `lastMsgId` **空**：从会话**最早**消息起取 `count` 条（`rowid` 升序）。
-            // `lastMsgId` **非空**：取严格**晚于**该 `message_id` 的后续 `count` 条（同会话）；若游标不在本会话则结果为空。
+            // `lastMsgId` **空**：从会话**最早**消息起取 `count` 条（**内存插入序**升序）。
+            // `lastMsgId` **非空**：取严格**晚于**该 `message_id` 的后续 `count` 条（同会话）；若锚点不在本会话则结果为空。
             std::vector<std::vector<uint8_t>> ListMessagesSinceMessageId(
                 const std::vector<uint8_t>& userId,
                 const std::vector<uint8_t>& lastMsgId,

@@ -18,20 +18,28 @@
 
 编写或评审 **`04-Features/`**、**`03-Business/`**、**`01-Architecture/`** 时，凡涉及 **消息/文件是否持久化**、**进程重启后本地数据是否保留**，须与下表一致：
 
+**持久化立场（全库默认安全取向）**：**一旦涉及持久化，即增加数据泄露隐患**；须**严格把控、严格收紧**——**白名单**、**最短必要**、**可销毁/生命周期**；**禁止**未经评审扩大 **SQLite / `.zdb`** 写入面。**能内存则内存**。下列「当前实现」描述**源码事实**，**不**表示已无泄露面或已满足上述取向的终态。
+
 | 优先级 | 来源 | 作用 |
 |:------:|------|------|
 | **1** | **`ZChatIM/` 源码**（`MM2.cpp`、`SqliteMetadataDb`、`ZdbManager` 等） | 运行行为以编译产物为准 |
 | **2** | **[05-ZChatIM-Implementation-Status.md](02-Core/05-ZChatIM-Implementation-Status.md)** | 已实现 / 桩 / 未接入的集中说明 |
 | **3** | **[03-Storage.md](02-Core/03-Storage.md) 第七节**、[04-ZdbBinaryLayout.md](02-Core/04-ZdbBinaryLayout.md) | 元数据与 **`.zdb` v1** 物理语义 |
 
-**已对齐结论（摘要）**：
+**本版本 C++ 范围（结案）**：以 **[05-ZChatIM-Implementation-Status.md](02-Core/05-ZChatIM-Implementation-Status.md)** 文首 **「本版本交付口径」** 与 **第7节勾选** 为准；**[01-MM1.md](02-Core/01-MM1.md) 一点五.3** 明确 **M3 愿景（双棘轮等）不纳入本版本实现**，**须独立立项**后再动（**不与** M0/M1 补洞迭代混排；详见 **[02-Cpp-Completion-Roadmap.md](07-Engineering/02-Cpp-Completion-Roadmap.md) 第5节**）。
 
-- **IM 消息**：**`StoreMessage`** 将 **AES-GCM** 密文写入 **`.zdb`**（**全平台 OpenSSL 3**；磁盘格式一致），**`im_messages` + `data_blocks`** 位于 **元数据 SQLite**（**默认 `ZCHATIM_USE_SQLCIPHER`**：**SQLCipher** 页加密，见 **`03-Storage.md` §4.2**）；进程重启后数据**默认保留**，除非执行 **`Cleanup` / `CleanupAllData`** 或删除数据目录。
+**M1 集成联测 — 当前阻塞**：**Android 客户端**与 **Spring Boot** 侧**尚未就绪**，**暂不开展**端到端联测（含进程重启、与服务端设备列表对账等）。**C++ 回归门槛**仍为 **`ZChatIM --test` 全绿**；联测解禁后按 **[02-Cpp-Completion-Roadmap.md](07-Engineering/02-Cpp-Completion-Roadmap.md) 第3节** 补场景验收。状态同步见 **`05` 第7.1节**。
+
+**M2 部署与服务端权威（可先文档验收）**：不依赖联测环境；上线前按 **[03-M2-Minimal-ServerOwnedDevices.md](07-Engineering/03-M2-Minimal-ServerOwnedDevices.md)** 与 **[03-Storage.md](02-Core/03-Storage.md) 第4.2 / 4.3节** 核对 **设备列表/踢设备以服务端为权威**、本地 **`mm1_device_sessions`** 等为客户端缓存等。
+
+**当前实现事实（摘要，与「持久化从严」对照）**：
+
+- **IM 消息**：**`StoreMessage`** 将 **AES-GCM** 密文**仅保存在进程内 RAM**（nonce‖ciphertext‖tag，与历史 `.zdb` chunk0 字节布局一致但**不落盘**）。**`senderUserId`、已读、编辑次数、回复关系** 均在 **MM2 内存结构**中维护；**元数据库不含** **`im_messages` / `im_message_reply`**；**`Initialize`** 仅 **`ImRamClearUnlocked()`** 清空**本进程** IM 内存。**进程重启后 IM 不保留**（与文件分片等磁盘态**分离**）。
 - **文件分片**：**`StoreFileChunk`** 同样写入 **`.zdb`** 并登记索引；与「仅内存缓存」类叙述冲突时，**以本仓库实现与本文第3节为准**。
-- **续传、好友请求、群显示名、群禁言（`mm2_group_mute`）、回复/编辑元数据、MM1/JNI UserData（`mm1_user_kv`）等**：由 **MM2 + `SqliteMetadataDb`（当前 `user_version=6`）** 持久化（见 **`03-Storage.md`**、**`05` 第2.1节**）。**群基础**（**`createGroup`/`inviteMember`/`…`/`updateGroupKey`**）已 **`mm1::GroupManager` 实装**（**`ZGK1`** 等）；**`updateGroupName`** 已 **`GroupNameManager`**；**`muteMember`/`isMuted`/`unmuteMember`** 已 **`GroupMuteManager`**（见 **`05` §3**）；**其余 JNI 业务**仍可能为桩：桥接层须遵守 **`01-JNI.md`** 中 MM1 校验再落 MM2 等约定。
+- **续传、好友请求、群显示名、群禁言（`mm2_group_mute`）、MM1/JNI UserData（`mm1_user_kv`）、多设备登记（`mm1_device_sessions`）、IM 通道活跃（`mm1_im_session_activity`）、证书 Pin（`mm1_cert_pin_*`）、用户在线缓存（`mm1_user_status`）、@ALL 限速窗（`mm1_mention_atall_window`）等**：由 **MM2 + `SqliteMetadataDb`（正常启动后 **`user_version=11`**；**无** **`im_messages` / `im_message_reply` 表**）** 持久化（见 **`03-Storage.md`**、**`05` 第2.1节**）。**群基础**（**`createGroup`/`inviteMember`/`…`/`updateGroupKey`**）已 **`mm1::GroupManager` 实装**（**`ZGK1`** 等）；**`updateGroupName`** 已 **`GroupNameManager`**；**`muteMember`/`isMuted`/`unmuteMember`** 已 **`GroupMuteManager`**（见 **`05` 第3节**）。**在线态**磁盘为**最后已知**显示缓存（**服务端**权威）；其余 **`MM1_manager_stubs`** 项以 **`05` 第3节** 为准；桥接层须遵守 **`01-JNI.md`** 中 MM1 校验再落 MM2 等约定。
 - **MM1 会话表、认证限流等**：以各业务文档为准，多为**进程内状态**，与 MM2 磁盘态**并存、不可混用叙述**。
 
-旧资料中「服务重启导致聊天消息丢失」仅适用于**无本地 MM2 持久化**的部署模型；**默认指本仓库客户端实现时，该结论不成立**。
+旧资料中「服务重启导致聊天消息丢失」：就 **IM 载荷**而言，**本仓库当前实现与此一致**（IM **不**依赖 SQLite `im_messages` 热路径）；**文件分片 / 好友请求 / 群元数据等**仍可能落盘，叙述时须**分项**说明。
 
 ---
 
@@ -48,7 +56,7 @@
 
 | 文档 | 内容 |
 |------|------|
-| [01-MM1](02-Core/01-MM1.md) | MM1 安全内存与销毁级别 |
+| [01-MM1](02-Core/01-MM1.md) | MM1：**愿景**（双棘轮、纯内存模型等）与**当前实现**对照（**一点五**）；**一点五.3**＝**M3 非本期 C++ 交付**结案；JNI 引用；销毁/侧信道目标 |
 | [02-MM2](02-Core/02-MM2.md) | MM2 消息与存储编排（概念） |
 | [03-Storage](02-Core/03-Storage.md) | 存储模型、表结构、与实现对照 |
 | [04-ZdbBinaryLayout](02-Core/04-ZdbBinaryLayout.md) | **`.zdb` v1** 二进制布局 |
@@ -101,11 +109,14 @@
 
 **JNI 细则（路由、不变量、按 API 说明）**：[ZChatIM/docs/JNI-API-Documentation.md](../ZChatIM/docs/JNI-API-Documentation.md)。修改契约时须与 **`01-JNI.md`**、上述头文件**同步**。
 
-### 3.7 `07-Engineering` — 构建
+### 3.7 `07-Engineering` — 构建与收尾
 
 | 文档 | 内容 |
 |------|------|
 | [01-Build-ZChatIM](07-Engineering/01-Build-ZChatIM.md) | 依赖、平台差异、Release 配置 |
+| [02-Cpp-Completion-Roadmap](07-Engineering/02-Cpp-Completion-Roadmap.md) | C++ **M0–M3** 收尾阶段（与 **`01-MM1` 愿景**区分） |
+| [03-M2-Minimal-ServerOwnedDevices](07-Engineering/03-M2-Minimal-ServerOwnedDevices.md) | **M2 最小清单**（前提：**服务端管多设备**） |
+| [04-M2-Key-Policy-And-Extensions](07-Engineering/04-M2-Key-Policy-And-Extensions.md) | **M2 密钥策略**；**第6节**＝本期交付边界 vs **HSM/libsecret 等**未来立项 |
 
 ---
 
@@ -115,7 +126,8 @@
 2. 存储与容器：**[03-Storage.md](02-Core/03-Storage.md) 第七节**、[04-ZdbBinaryLayout.md](02-Core/04-ZdbBinaryLayout.md)。
 3. 网络与 TLV：**[02-ZSP-Protocol.md](01-Architecture/02-ZSP-Protocol.md)**。
 4. JNI：**[01-JNI.md](06-Appendix/01-JNI.md)** 与 **`ZChatIM/docs/JNI-API-Documentation.md`**。
-5. 构建：**[07-Engineering/01-Build-ZChatIM.md](07-Engineering/01-Build-ZChatIM.md)**。
+5. 构建：**[07-Engineering/01-Build-ZChatIM.md](07-Engineering/01-Build-ZChatIM.md)**。  
+6. C++ 迭代范围：**[07-Engineering/02-Cpp-Completion-Roadmap.md](07-Engineering/02-Cpp-Completion-Roadmap.md)**（与 **[05](02-Core/05-ZChatIM-Implementation-Status.md)** 对照）。
 
 **实现索引（节选）**：认证限流 / 封禁见 **[02-Auth.md](03-Business/02-Auth.md) 第七节**；IM 会话 idle / `lastActive` 见 **[04-Session.md](03-Business/04-Session.md) 第七节**。
 
@@ -123,7 +135,7 @@
 
 ## 5. 维护约定
 
-- 章节引用统一为 **「第×节」** 或 **「《文档名》第×节」**；**勿使用** `§` 符号。
+- 章节引用统一为 **「第×节」** 或 **「《文档名》第×节」**；**勿使用**西文 **Unicode U+00A7**（节号字符）代替「第×节」写法。
 - 功能或接口变更时：**规范文档**、**`05` 实现状态**、**相关头文件**、（若涉及）**JNI 双文档**须同步更新。
 - 不在 **`04-Features`** 中重复粘贴与 **`02-Core`** 矛盾的存储实现细节；以 **第2节 权威链** 为准。
 - **`ZChatIM/docs/BUILD-WINDOWS.md`** 仅为指向 **`07-Engineering/01-Build-ZChatIM.md`** 的迁移桩，勿在其内扩充正文。
@@ -134,7 +146,7 @@
 
 | 主题 | 文档 |
 |------|------|
-| 销毁级别 | [02-Core/01-MM1.md](02-Core/01-MM1.md) |
+| MM1 愿景 / 销毁级别 | [02-Core/01-MM1.md](02-Core/01-MM1.md)（**一点五** 对照当前实现） |
 | 密钥轮换 | [03-Business/05-KeyRotate.md](03-Business/05-KeyRotate.md) |
 | 证书固定 | [04-Features/07-CertPinning.md](04-Features/07-CertPinning.md) |
 | 消息同步 / 撤回 / 编辑 | [04-Features/01-MessageSync.md](04-Features/01-MessageSync.md)、[02-MessageRecall.md](04-Features/02-MessageRecall.md)、[09-MessageEdit.md](04-Features/09-MessageEdit.md) |

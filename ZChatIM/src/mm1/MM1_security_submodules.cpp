@@ -13,10 +13,23 @@
 #include "mm2/storage/Crypto.h"
 #include "Types.h"
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstring>
+#include <cstdint>
 #include <mutex>
 #include <random>
 #include <string>
+#include <thread>
+#include <vector>
+
+#if defined(__x86_64__) || defined(_M_AMD64) || defined(__i386__) || defined(_M_IX86)
+#    if !defined(__aarch64__) && !defined(_M_ARM64) && !defined(_M_ARM64EC)
+#        include <immintrin.h>
+#        define ZCHATIM_SIDECHANNEL_CLFLUSH 1
+#    endif
+#endif
 
 #if defined(_WIN32)
 #    ifndef WIN32_LEAN_AND_MEAN
@@ -30,6 +43,11 @@
 #if defined(ZCHATIM_HAVE_JNI)
 #    include <jni.h>
 #endif
+
+namespace {
+// 4 KiB scratch for `SideChannel::FlushCache`: line-sized reads + optional x86 CLFLUSH.
+alignas(64) std::uint8_t g_sideChannelScratch[4096]{};
+} // namespace
 
 namespace ZChatIM::mm1::security {
 
@@ -58,6 +76,11 @@ namespace ZChatIM::mm1::security {
             return;
         }
         std::lock_guard<std::mutex> lk(m_mutex);
+        const auto lkIt = m_lockedRegions.find(ptr);
+        if (lkIt != m_lockedRegions.end()) {
+            (void)common::Memory::UnlockMemory(ptr, lkIt->second);
+            m_lockedRegions.erase(lkIt);
+        }
         m_allocatedMemory.erase(ptr);
         common::Memory::Free(ptr);
     }
@@ -65,6 +88,13 @@ namespace ZChatIM::mm1::security {
     void* SecurityMemory::Reallocate(void* ptr, size_t newSize)
     {
         std::lock_guard<std::mutex> lk(m_mutex);
+        if (ptr) {
+            const auto lkIt = m_lockedRegions.find(ptr);
+            if (lkIt != m_lockedRegions.end()) {
+                (void)common::Memory::UnlockMemory(ptr, lkIt->second);
+                m_lockedRegions.erase(lkIt);
+            }
+        }
         void* q = common::Memory::Reallocate(ptr, newSize);
         if (newSize == 0 && ptr) {
             m_allocatedMemory.erase(ptr);
@@ -85,7 +115,12 @@ namespace ZChatIM::mm1::security {
         if (!ptr || size == 0) {
             return false;
         }
-        return common::Memory::LockMemory(ptr, size);
+        if (!common::Memory::LockMemory(ptr, size)) {
+            return false;
+        }
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_lockedRegions[ptr] = size;
+        return true;
     }
 
     bool SecurityMemory::Unlock(void* ptr, size_t size)
@@ -93,7 +128,13 @@ namespace ZChatIM::mm1::security {
         if (!ptr || size == 0) {
             return false;
         }
-        return common::Memory::UnlockMemory(ptr, size);
+        const bool ok = common::Memory::UnlockMemory(ptr, size);
+        std::lock_guard<std::mutex> lk(m_mutex);
+        const auto it = m_lockedRegions.find(ptr);
+        if (ok && it != m_lockedRegions.end() && it->second == size) {
+            m_lockedRegions.erase(it);
+        }
+        return ok;
     }
 
     bool SecurityMemory::Protect(void* ptr, size_t size, int protection)
@@ -112,11 +153,37 @@ namespace ZChatIM::mm1::security {
         return common::Memory::IsMemoryAccessible(ptr, size);
     }
 
-    bool SecurityMemory::IsLocked(const void* ptr, size_t size)
+    bool SecurityMemory::IsLocked(const void* ptr, size_t size) const
     {
-        (void)ptr;
-        (void)size;
+        if (!ptr || size == 0) {
+            return false;
+        }
+        const auto q   = reinterpret_cast<std::uintptr_t>(ptr);
+        const auto qEnd = q + size;
+        if (qEnd < q) {
+            return false;
+        }
+        std::lock_guard<std::mutex> lk(m_mutex);
+        for (const auto& pr : m_lockedRegions) {
+            const auto p    = reinterpret_cast<std::uintptr_t>(pr.first);
+            const auto pEnd = p + pr.second;
+            if (pEnd < p) {
+                continue;
+            }
+            if (p <= q && qEnd <= pEnd) {
+                return true;
+            }
+        }
         return false;
+    }
+
+    void SecurityMemory::ReleaseAllLockTracking()
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        for (const auto& pr : m_lockedRegions) {
+            (void)common::Memory::UnlockMemory(pr.first, pr.second);
+        }
+        m_lockedRegions.clear();
     }
 
     size_t SecurityMemory::GetAllocatedSize() const
@@ -251,7 +318,10 @@ namespace ZChatIM::mm1::security {
 
     bool SideChannel::ConstantTimeCompare(uint64_t a, uint64_t b)
     {
-        return a == b;
+        return common::Memory::ConstantTimeCompare(
+            reinterpret_cast<const uint8_t*>(&a),
+            reinterpret_cast<const uint8_t*>(&b),
+            sizeof(uint64_t));
     }
 
     bool SideChannel::ConstantTimeCompare(const char* a, const char* b, size_t size)
@@ -269,33 +339,69 @@ namespace ZChatIM::mm1::security {
 
     void SideChannel::SecureCopy(void* dest, const void* src, size_t size)
     {
-        if (dest && src && size) {
-            std::memmove(dest, src, size);
-        }
+        common::Memory::SecureCopy(dest, src, size);
     }
 
     void SideChannel::SecureFill(void* ptr, uint8_t value, size_t size)
     {
-        if (ptr && size) {
-            std::memset(ptr, static_cast<int>(value), size);
-        }
+        common::Memory::SecureFill(ptr, value, size);
     }
 
     void SideChannel::AntiTimingDelay(size_t operations)
     {
-        (void)operations;
+        // 有界防 DoS：忽略超大 `operations`；与 `m_protectionEnabled` 联动加重工作量。
+        constexpr size_t kCap = 65536;
+        size_t            n     = std::min(operations, kCap);
+        if (m_protectionEnabled) {
+            n *= 32U;
+        } else {
+            n *= 4U;
+        }
+        volatile std::uint64_t acc = 0;
+        for (size_t i = 0; i < n; ++i) {
+            acc ^= static_cast<std::uint64_t>(i) * UINT64_C(1315423911);
+        }
+        (void)acc;
+        std::atomic_thread_fence(std::memory_order_seq_cst);
     }
 
     void SideChannel::RandomDelay()
     {
+        // CSPRNG 抖动；防护关时仍用较短上界，降低默认同步路径成本。
+        std::vector<std::uint8_t> bytes = common::Random::GenerateSecureBytes(2);
+        const std::uint32_t       span  = m_protectionEnabled ? 8000U : 400U;
+        const std::uint32_t       base  = m_protectionEnabled ? 40U : 8U;
+        std::uint32_t             us    = base;
+        if (bytes.size() >= 2) {
+            const std::uint32_t r = static_cast<std::uint32_t>(bytes[0])
+                | (static_cast<std::uint32_t>(bytes[1]) << 8);
+            us = base + (r % span);
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(static_cast<std::chrono::microseconds::rep>(us)));
     }
 
     void SideChannel::FlushCache()
     {
+        std::atomic_thread_fence(std::memory_order_seq_cst);
+#if defined(ZCHATIM_SIDECHANNEL_CLFLUSH)
+        for (size_t i = 0; i < sizeof(g_sideChannelScratch); i += 64U) {
+            _mm_clflush(reinterpret_cast<const void*>(&g_sideChannelScratch[i]));
+        }
+#endif
+        volatile std::uint32_t sink = 0;
+        for (size_t i = 0; i < sizeof(g_sideChannelScratch); i += 64U) {
+            sink ^= g_sideChannelScratch[i];
+        }
+        (void)sink;
+        std::atomic_thread_fence(std::memory_order_seq_cst);
     }
 
     void SideChannel::PreventCacheSideChannel()
     {
+        FlushCache();
+        if (m_protectionEnabled) {
+            AntiTimingDelay(256);
+        }
     }
 
     bool SideChannel::IsSideChannelProtectionEnabled()
@@ -543,14 +649,22 @@ namespace ZChatIM::mm1::security {
     void* JniSecurity::AllocateJniMemory(const void* jniEnv, size_t size)
     {
         (void)jniEnv;
-        (void)size;
-        return nullptr;
+        if (size == 0) {
+            return nullptr;
+        }
+        void* p = common::Memory::Allocate(size);
+        if (p) {
+            common::Memory::SecureZero(p, size);
+        }
+        return p;
     }
 
     void JniSecurity::FreeJniMemory(const void* jniEnv, void* ptr)
     {
         (void)jniEnv;
-        (void)ptr;
+        if (ptr) {
+            common::Memory::Free(ptr);
+        }
     }
 
     bool JniSecurity::CheckException(const void* jniEnv)

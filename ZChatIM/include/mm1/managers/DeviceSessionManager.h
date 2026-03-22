@@ -19,6 +19,7 @@ namespace ZChatIM {
         public:
             // RegisterDeviceSession: 注册新设备会话；返回被踢出的 sessionId（可为空）
             // 当设备数超过 2 时，踢掉最早登录的设备。
+            // 持久化：**`MM2::Mm1RegisterDeviceSession` → `mm1_device_sessions`**（须 **`MM2::Initialize`**；否则返回 **false**）。
             bool RegisterDeviceSession(
                 const std::vector<uint8_t>& userId,
                 const std::vector<uint8_t>& deviceId,
@@ -34,8 +35,11 @@ namespace ZChatIM {
             // GetDeviceSessions: 获取用户下所有设备会话（<=2）
             std::vector<DeviceSessionEntry> GetDeviceSessions(const std::vector<uint8_t>& userId) const;
 
-            // CleanupExpiredSessions: 清理过期会话（若实现）
+            // CleanupExpiredSessions：`lastActiveMs` 早于 **30 分钟** idle（与 **04-Session.md** 一致）的登记移除
             void CleanupExpiredSessions(uint64_t nowMs);
+
+            // 清空全部多设备登记（**SQLite `mm1_device_sessions`**；**`MM2` 未初始化** 时为 no-op）；供 **`MM1::EmergencyTrustedZoneWipe`** 等（**`CleanupAllData`** 删库后亦可调用）。
+            void ClearAllRegistrations();
         };
     } // namespace mm1
 } // namespace ZChatIM

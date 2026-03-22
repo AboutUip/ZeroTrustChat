@@ -3,7 +3,7 @@
 > **两种「会话」勿混**：  
 > - **ZSP `Header.SessionID`**：**4 字节**，见 **`docs/01-Architecture/02-ZSP-Protocol.md` 第三节**。  
 > - **`imSessionId`（JNI / MM1）**：**16 字节** 聊天通道 ID，见 **`docs/06-Appendix/01-JNI.md`** 文首、**第七节**。  
-> **落盘**：**`imSessionId`** 与 MM2 **`im_messages.session_id`** 一致；**ZSP 4B SessionID** 不写入该列。
+> **与 MM2 对齐**：**`imSessionId`** 与 MM2 **RAM IM** 中的 **`session_id`（16B 会话键）** 语义一致；**ZSP 4B SessionID** 为**另一概念**，**不**写入该 16B 通道 ID。
 
 ## 一、会话生命周期
 
@@ -63,7 +63,7 @@
 
 | 组件 | 路径 | 说明 |
 |------|------|------|
-| `SessionActivityManager` | `include/mm1/managers/SessionActivityManager.h`、`src/mm1/managers/SessionActivityManager.cpp` | 维护 **imSessionId（16 字节）** 的 `lastActive`（Unix 纪元毫秒）；**idle 30 分钟** 与 第二节 一致；`TouchSession`/`CleanupExpiredSessions`/`IsSessionExpired` 对不可信 `nowMs` 相对本机时间做**钳制**（防止恶意超前时间延长 idle）；`GetSessionStatus` 使用本机当前 Unix 毫秒。 |
+| `SessionActivityManager` | `include/mm1/managers/SessionActivityManager.h`、`src/mm1/managers/SessionActivityManager.cpp` | 维护 **imSessionId（16 字节）** 的 `lastActive`（Unix 纪元毫秒）；**idle 30 分钟** 与 第二节 一致；`TouchSession`/`CleanupExpiredSessions`/`IsSessionExpired` 对不可信 `nowMs` 相对本机时间做**钳制**（防止恶意超前时间延长 idle）；`GetSessionStatus` 使用本机当前 Unix 毫秒。**`lastActive` 落 `mm1_im_session_activity`**（**`MM2::Initialize` 后**；与 **IM 消息 RAM** 无关，**进程重启**后 IM 消息仍清空，**活跃时间戳**可从元库恢复）。 |
 
 > **与 ZSP**：此处 `imSessionId` 为 JNI/MM1 通道会话标识，**不是** ZSP Header 中 4 字节 `SessionID`（见 `Types.h` / `02-ZSP-Protocol.md`）。
 
@@ -78,6 +78,6 @@
 | `TouchSession` | 客户端周期性上报活跃：**`nowMs`** 刷新 **`imSessionId`** 的 `lastActive` |
 | `GetSessionStatus` | 查询 **`imSessionId`** 是否仍有效（未 idle 超时） |
 | `CleanupExpiredSessions` | 服务端/定时任务清理过期 **IM 会话**（须持有效 **`caller`**） |
-| `DestroySession` | 销毁 **认证会话**（参数为 `sessionIdToDestroy`，**不是** `imSessionId`） |
+| `DestroySession` | 销毁 **认证会话**（参数为 `sessionIdToDestroy`，**不是** `imSessionId`）；**当前 `JniBridge`**：`callerSessionId` 与 `sessionIdToDestroy` 须解析为**同一** `principal`（见 **`01-JNI.md` 绑定矩阵**） |
 
 **ZSP 心跳**：**`HEARTBEAT`（0x80）** 在 **传输层** 保连接；**是否**映射到 **`TouchSession`** 由 **JniBridge / 服务端** 实现约定，本文不强制一步对应。

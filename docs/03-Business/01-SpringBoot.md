@@ -2,7 +2,7 @@
 
 > **仓库边界**：**`ZChatIM/`** 提供 **MM1/MM2 + JNI 头 + 桩 `ZChatIMJNI.cpp`**；**SpringBoot/Netty** 工程若在本 monorepo 外，须与本节及 **`02-ZSP-Protocol.md`** 对齐。  
 > **JNI 契约**：**不得以本节 第五节 简表替代** **`docs/06-Appendix/01-JNI.md`**（含 **`callerSessionId` 首参**、`imSessionId` 与 **`StoreMessage`** 参数名）。  
-> **落盘**：消息持久化由 **`MM2::StoreMessage`** 等完成（**`docs/README.md`**「冲突与权威」）；SpringBoot **不直连** SQLite/`.zdb` 文件。
+> **落盘**：**IM** 默认**不落盘**（**`MM2::StoreMessage` → RAM**，见 **`docs/README.md`**）；**文件分片 / 好友请求 / 群元数据等**由 **MM2 + 元库 / `.zdb`** 持久化；SpringBoot **不直连** SQLite/`.zdb` 文件。
 
 ## 一、职责
 

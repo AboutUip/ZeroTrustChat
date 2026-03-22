@@ -1,23 +1,18 @@
 #include "mm1/managers/SessionActivityManager.h"
+#include "mm2/MM2.h"
 #include "Types.h"
 
-#include <ctime>
 #include <chrono>
 #include <cstdint>
-#include <map>
 #include <mutex>
 #include <vector>
 
 namespace ZChatIM::mm1 {
     namespace {
 
-        // docs/03-Business/04-Session.md：idle 超时 30 分钟
         constexpr uint64_t kIdleTimeoutMs = 30ULL * 60ULL * 1000ULL;
 
         constexpr size_t kImSessionIdBytes = USER_ID_SIZE;
-
-        // 防止不可信侧刷爆内存；与 AuthSessionManager 同量级策略。
-        constexpr size_t kMaxTrackedSessions = 100000;
 
         uint64_t NowUnixEpochMs()
         {
@@ -26,8 +21,6 @@ namespace ZChatIM::mm1 {
                 duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
         }
 
-        // 钳制不可信 nowMs：禁止大幅超前「刷新」idle，禁止过久回溯导致误清理他人会话。
-        // 用差值比较，避免 srv + skew 的 uint64 溢出。
         uint64_t SanitizeNowMs(uint64_t clientMs)
         {
             const uint64_t srv = NowUnixEpochMs();
@@ -45,25 +38,10 @@ namespace ZChatIM::mm1 {
             return clientMs;
         }
 
-        void EraseIdleExpired(
-            std::map<std::vector<uint8_t>, uint64_t>& lastActiveMs,
-            uint64_t nowMs,
-            uint64_t idleTimeoutMs)
-        {
-            for (auto it = lastActiveMs.begin(); it != lastActiveMs.end();) {
-                if (nowMs >= it->second && (nowMs - it->second) > idleTimeoutMs) {
-                    it = lastActiveMs.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-        }
-
     } // namespace
 
     struct SessionActivityManager::Impl {
-        mutable std::mutex mutex;
-        std::map<std::vector<uint8_t>, uint64_t> lastActiveMs;
+        // 占位：保留 unique_ptr 布局，逻辑均在 MM2 / SQLite。
     };
 
     SessionActivityManager::SessionActivityManager()
@@ -84,17 +62,9 @@ namespace ZChatIM::mm1 {
         }
 
         const uint64_t t = SanitizeNowMs(nowMs);
-
-        std::lock_guard<std::mutex> lock(impl_->mutex);
-        EraseIdleExpired(impl_->lastActiveMs, t, kIdleTimeoutMs);
-
-        const auto existing = impl_->lastActiveMs.find(sessionId);
-        if (existing == impl_->lastActiveMs.end()
-            && impl_->lastActiveMs.size() >= kMaxTrackedSessions) {
-            return;
-        }
-
-        impl_->lastActiveMs[sessionId] = t;
+        mm2::MM2&      m2 = mm2::MM2::Instance();
+        (void)m2.Mm1CleanupExpiredImSessionActivity(t, kIdleTimeoutMs);
+        (void)m2.Mm1TouchImSessionActivity(sessionId, t);
     }
 
     bool SessionActivityManager::IsSessionExpired(
@@ -107,15 +77,19 @@ namespace ZChatIM::mm1 {
 
         const uint64_t t = SanitizeNowMs(nowMs);
 
-        std::lock_guard<std::mutex> lock(impl_->mutex);
-        const auto it = impl_->lastActiveMs.find(sessionId);
-        if (it == impl_->lastActiveMs.end()) {
+        mm2::MM2& m2 = mm2::MM2::Instance();
+        uint64_t  last = 0;
+        bool      found = false;
+        if (!m2.Mm1SelectImSessionLastActive(sessionId, last, found)) {
             return true;
         }
-        if (t < it->second) {
+        if (!found) {
+            return true;
+        }
+        if (t < last) {
             return false;
         }
-        return (t - it->second) > kIdleTimeoutMs;
+        return (t - last) > kIdleTimeoutMs;
     }
 
     bool SessionActivityManager::GetSessionStatus(const std::vector<uint8_t>& sessionId) const
@@ -130,9 +104,15 @@ namespace ZChatIM::mm1 {
         }
 
         const uint64_t t = SanitizeNowMs(nowMs);
+        (void)mm2::MM2::Instance().Mm1CleanupExpiredImSessionActivity(t, kIdleTimeoutMs);
+    }
 
-        std::lock_guard<std::mutex> lock(impl_->mutex);
-        EraseIdleExpired(impl_->lastActiveMs, t, kIdleTimeoutMs);
+    void SessionActivityManager::ClearAllTrackedSessions()
+    {
+        if (!impl_) {
+            return;
+        }
+        (void)mm2::MM2::Instance().Mm1ClearAllImSessionActivity();
     }
 
 } // namespace ZChatIM::mm1

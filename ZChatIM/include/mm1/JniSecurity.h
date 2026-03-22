@@ -55,11 +55,11 @@ namespace ZChatIM
                 // =============================================================
                 // JNI 内存管理
                 // =============================================================
+                // **`jniEnv`**：预留与 JNI 分配策略对齐；**当前实现**委托 **`common::Memory::Allocate` / `Free`**（**`Allocate` 成功**后 **`SecureZero`** 整块），与 **`02-Cpp-Completion-Roadmap.md` M0** 一致。
                 
-                // 安全的 JNI 内存分配
+                // 安全的 JNI 侧辅助缓冲区分配（**非** `NewDirectByteBuffer` 等 JVM 堆对象）
                 void* AllocateJniMemory(const void* jniEnv, size_t size);
                 
-                // 安全的 JNI 内存释放
                 void FreeJniMemory(const void* jniEnv, void* ptr);
                 
                 // =============================================================

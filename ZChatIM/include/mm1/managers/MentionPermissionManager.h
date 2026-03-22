@@ -8,11 +8,13 @@ namespace ZChatIM {
         // =============================================================
         // Mention（@提及 / @ALL）权限与速率校验契约
         // =============================================================
+        // **成员/角色**：**`MM2` → `group_members` SQL**；**@ALL 限速**：**`mm1_mention_atall_window`**（**`user_version=11`**）。
+        // =============================================================
         class MentionPermissionManager {
         public:
             // mentionType: 1=个人，2=@ALL
             // @个人：sender 必须在群内；mentionedUserIds 必须为群成员（至少需要存在性）
-            // @ALL：sender 必须为群主/管理员，并满足每分钟最多3次
+            // @ALL：sender 必须为群主/管理员，并满足 **60s** 滑动窗内最多 **3** 次（**`mm1_mention_atall_window`**，重启可恢复）
             bool ValidateMentionRequest(
                 const std::vector<uint8_t>& groupId,
                 const std::vector<uint8_t>& senderId,
@@ -26,6 +28,8 @@ namespace ZChatIM {
                 const std::vector<uint8_t>& groupId,
                 const std::vector<uint8_t>& senderId,
                 uint64_t nowMs);
+
+            void ClearAtAllRateLimitState();
         };
     } // namespace mm1
 } // namespace ZChatIM

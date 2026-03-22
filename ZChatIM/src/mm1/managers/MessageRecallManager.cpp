@@ -51,6 +51,15 @@ namespace ZChatIM::mm1 {
             return false;
         }
 
+        std::vector<uint8_t> storedSender;
+        if (!mm2::MM2::Instance().GetMessageSenderUserId(messageId, storedSender)) {
+            return false;
+        }
+        if (storedSender.size() != USER_ID_SIZE
+            || !common::Memory::ConstantTimeCompare(storedSender.data(), senderId.data(), USER_ID_SIZE)) {
+            return false;
+        }
+
         const std::vector<uint8_t> pubkey =
             MM1::Instance().GetUserDataManager().GetUserData(senderId, kUserDataEd25519PubkeyType);
         if (pubkey.size() != kEd25519PublicKeyBytes) {

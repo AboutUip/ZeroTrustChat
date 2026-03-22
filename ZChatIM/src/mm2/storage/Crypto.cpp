@@ -228,6 +228,39 @@ namespace ZChatIM::mm2 {
         return GenerateSecureRandom(nonceLen);
     }
 
+    bool Crypto::DeriveKeyPbkdf2HmacSha256(
+        const uint8_t* password,
+        size_t         passwordLen,
+        const uint8_t* salt,
+        size_t         saltLen,
+        int            iterations,
+        uint8_t*       outputKey,
+        size_t         outputKeyLen)
+    {
+        if (!s_initialized || password == nullptr || salt == nullptr || outputKey == nullptr) {
+            return false;
+        }
+        if (passwordLen == 0 || saltLen == 0 || outputKeyLen == 0 || iterations < 10000) {
+            return false;
+        }
+        if (passwordLen > static_cast<size_t>(std::numeric_limits<int>::max())
+            || saltLen > static_cast<size_t>(std::numeric_limits<int>::max())
+            || outputKeyLen > static_cast<size_t>(std::numeric_limits<int>::max())
+            || iterations > std::numeric_limits<int>::max()) {
+            return false;
+        }
+        return PKCS5_PBKDF2_HMAC(
+                   reinterpret_cast<const char*>(password),
+                   static_cast<int>(passwordLen),
+                   salt,
+                   static_cast<int>(saltLen),
+                   iterations,
+                   EVP_sha256(),
+                   static_cast<int>(outputKeyLen),
+                   outputKey)
+               == 1;
+    }
+
     bool Crypto::DeriveKey(
         const uint8_t* inputKey,
         size_t         inputKeyLen,
@@ -236,28 +269,8 @@ namespace ZChatIM::mm2 {
         uint8_t*       outputKey,
         size_t         outputKeyLen)
     {
-        if (!s_initialized || inputKey == nullptr || salt == nullptr || outputKey == nullptr) {
-            return false;
-        }
-        if (inputKeyLen == 0 || saltLen == 0 || outputKeyLen == 0) {
-            return false;
-        }
-        if (inputKeyLen > static_cast<size_t>(std::numeric_limits<int>::max())
-            || saltLen > static_cast<size_t>(std::numeric_limits<int>::max())
-            || outputKeyLen > static_cast<size_t>(std::numeric_limits<int>::max())) {
-            return false;
-        }
         constexpr int kIterations = 100000;
-        return PKCS5_PBKDF2_HMAC(
-                   reinterpret_cast<const char*>(inputKey),
-                   static_cast<int>(inputKeyLen),
-                   salt,
-                   static_cast<int>(saltLen),
-                   kIterations,
-                   EVP_sha256(),
-                   static_cast<int>(outputKeyLen),
-                   outputKey)
-               == 1;
+        return DeriveKeyPbkdf2HmacSha256(inputKey, inputKeyLen, salt, saltLen, kIterations, outputKey, outputKeyLen);
     }
 
     bool Crypto::HashSha256(const uint8_t* data, size_t dataLen, uint8_t* hash)

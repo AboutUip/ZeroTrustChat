@@ -6,6 +6,8 @@
 
 **章节对应（严格）**：`01-JNI.md` 零〜十二节 ↔ 本文 第2.0节至第2.10节 及 第1节；其中「十、安全模块」拆为本文 第2.9节 中密钥/运维/证书/注销/好友备注等小节。
 
+**常见 IM 场景怎么调 API**：见本文 **§0.5～§0.5.3**（含 **§0.5.1～0.5.2** 边界）；**逐方法契约与 principal 矩阵**仍以 **`01-JNI.md`** 与 **§2** 为准。
+
 ## 0. 总体边界与路由原则
 本系统存在明确的信任边界：JNI/Java 属于不可信区，MM1/MM2 属于可信区。JniBridge 必须把每个 JNI 触发入口路由到对应的 MM1 或 MM2 管理器契约，不能在 JniBridge 中“绕过 MM1 签名/权限校验，直接调用 MM2 存储能力”。
 
@@ -15,8 +17,117 @@
 3. 好友验证：必须通过 `mm1::FriendManager` 完成 timestamp + Ed25519 signature 的校验与好友请求/响应/删除的状态流转，不允许在 JniBridge 里绕过到 MM2。
 4. 回复关系落库：必须先走 `mm1::MessageReplyManager::StoreMessageReplyRelation` 完成发送者身份签名校验，再落到 `mm2::MM2::StoreMessageReplyRelation`。
 5. 存储完整性（SQLite）：对 `.zdb` 的写入/读取必须触发 sha256 计算与 `BlockIndex`/SQLite 记录/比对链路，且读取比对失败必须采取明确策略（返回 false/拒绝解密/标记失效等），不能默默继续。
-6. **callerSessionId**：除 `Initialize` / `Cleanup` / `Auth` / `VerifySession` / `ValidateJniCall` 两重载外，**所有** JNI 业务入口首参为 `callerSessionId`（`std::vector<uint8_t>`，长度 `Types::JNI_AUTH_SESSION_TOKEN_BYTES`，与 `Auth` 返回一致）。**`JniBridge`** 用 **`TryBindCaller` → `AuthSessionManager::TryGetSessionUserId`** 判定会话有效（与 **`VerifySession(caller)`** **等价**）。**principal 与后续 id 的绑定按 API 分流**，并非每个入口都要求 `userId==principal` 或 `imSessionId==principal`；**权威清单**：**`docs/06-Appendix/01-JNI.md`「principal 绑定矩阵」**（与 **`src/jni/JniBridge.cpp`** 一致）。**`DestroySession`** 为 `(callerSessionId, sessionIdToDestroy)`，两会话须解析为**同一** principal。细则见 **`JniSecurityPolicy.h`**。
-7. **并发**：`JniBridge` 每个 public 方法入口 SHOULD 在 `m_apiRecursiveMutex` 下串行进入 MM1/MM2；`MM1` 的 **public 实例方法**（含各 `Get*Manager()`）入口已持 **`MM1::m_apiRecursiveMutex`**；**`MessageReplyManager::StoreMessageReplyRelation`** 入口再次持同一递归锁（与从 `MM1` 嵌套调用可重入）。`MM2::m_stateMutex` 为递归互斥；`MessageQueryManager` 仅在 MM2 已持有 `m_stateMutex` 时调用（禁止将查询器引用泄露到无同步路径）。**锁顺序**：须同时触及 MM1+MM2 时 **先 MM1（或 JniBridge 等价锁）再 MM2**，见 `include/common/JniSecurityPolicy.h` §7。
+6. **callerSessionId**：除 `Initialize` / **`InitializeWithPassphrase`** / `Cleanup` / `Auth` / `VerifySession` / `ValidateJniCall` 两重载外，**所有** JNI 业务入口首参为 `callerSessionId`（`std::vector<uint8_t>`，长度 `Types::JNI_AUTH_SESSION_TOKEN_BYTES`，与 `Auth` 返回一致）。**`JniBridge`** 用 **`TryBindCaller` → `AuthSessionManager::TryGetSessionUserId`** 判定会话有效。**桥接已 `Initialize` 时**，与 **`VerifySession(caller)`** 对同一会话 id **结论等价**；未初始化时二者均失败短路。**principal 与后续 id 的绑定按 API 分流**，并非每个入口都要求 `userId==principal` 或 `imSessionId==principal`；**权威清单**：**`docs/06-Appendix/01-JNI.md`「principal 绑定矩阵」**（与 **`src/jni/JniBridge.cpp`** 一致）。**`DestroySession`** 为 `(callerSessionId, sessionIdToDestroy)`，两会话须解析为**同一** principal。细则见 **`JniSecurityPolicy.h`**。
+7. **并发**：`JniBridge` 每个 public 方法入口 SHOULD 在 **`m_apiRecursiveMutex`** 下串行进入 MM1/MM2（**整段 JNI 调用**受桥接锁保护）。**`JniBridge::m_initialized`** 为 **`std::atomic<bool>`**：无锁查询（如内部 **`CheckInitialized`**）用 **acquire load**，与 **`Initialize`/`Cleanup`/`EmergencyWipe`** 的 **release store** 配对（见 **`JniSecurityPolicy.h` §5**）。**`MM1::Get*Manager()`**：仅在**取引用**的瞬间持 **`MM1::m_apiRecursiveMutex`**，返回后锁即释放；**随后**对 Manager 成员函数的调用**不一定**仍在 MM1 锁内——须依赖 **桥接锁**、**各 Manager 自有互斥**（如 **`UserDataManager::Impl::mutex`**）或 **Manager 入口自锁**（如 **`MessageReplyManager`/`MentionPermissionManager`** 对 **`MM1::m_apiRecursiveMutex`**）。**`MM2::m_stateMutex`** 为递归互斥；**`MM2::IsInitialized()`** 在锁内读 **`m_initialized`**。**`MessageQueryManager`** 仅在 MM2 已持有 **`m_stateMutex`** 时使用。**锁顺序**：须同时触及 MM1+MM2 时 **先 MM1（或 JniBridge 等价锁）再 MM2**，见 **`JniSecurityPolicy.h` 第7条**。
+
+## 0.5 常见 IM 操作与 JNI 映射（产品视角）
+
+本节回答「做一款常见 IM 客户端时，**大概要调哪些 native 方法**」。表中 **Java/camelCase** 与 **`ZChatIMNative`** / **`JniNatives.cpp`** 一致；**`callerSessionId`** 除单独说明外，业务调用均须传入 **`auth` 返回的会话句柄**（长度见 **`Types::JNI_AUTH_SESSION_TOKEN_BYTES`**）。**`imSessionId`** 为 **16B 会话通道 ID**（可与当前用户 **`principal` 不同**，见 **`01-JNI.md` 绑定矩阵**）。
+
+| 常见产品能力 | 建议调用的 JNI（顺序/组合因 UI 而定） | 说明 |
+|-------------|--------------------------------------|------|
+| **冷启动 / 解锁本地库** | `initialize` 或 **`initializeWithPassphrase`** → `getStatus` | 须先于业务；口令路径见 **§2.0**、**`05`**。 |
+| **登录（建立 native 会话）** | `auth(userId, token, clientIp?)` → 保存返回的 **sessionId** 作为后续 **`callerSessionId`** | **非**「用户注册」；凭证由**上层/服务端**签发。 |
+| **会话是否仍有效** | `verifySession(sessionId)` | 与桥接已初始化时 **`caller`** 校验结论对齐见 **§0 第6条**。 |
+| **登出 / 踢掉本会话** | `destroySession(caller, sessionIdToDestroy)` | 同人双会话互毁；见 **`01-JNI.md`**。 |
+| **进程退出 / 对称释放 native** | `cleanup` | 与 **`initialize`** 对称；进程结束或切换数据根目前建议成对调用（**§2.0** / **`01-JNI.md` 零节**）。 |
+| **发文本/密文消息** | `storeMessage(caller, imSessionId, payload)` | 返回 **16B `messageId`**；**`principal`** 作为发送者写入 RAM 行，供编辑/撤回绑定。 |
+| **按 id 拉一条** | `retrieveMessage(caller, messageId)` | |
+| **会话内最近消息（按 imSessionId）** | `getSessionMessages(caller, imSessionId, limit)` | 聊天页常用；**不**强制 **`imSessionId == principal`**（绑定矩阵）。 |
+| **按用户维度最近 N 条** | `listMessages(caller, userId, count)` | 返回 **`message_id(16)‖payload_len(u32 BE)‖payload`**；**`userId` 须与 principal 一致**。 |
+| **增量同步（时间戳 / 游标）** | `listMessagesSinceTimestamp` / **`listMessagesSinceMessageId`** | 适合「从某刻/某条之后拉一页」；编码同 **`01-JNI.md` 二、消息**。 |
+| **标记已读** | `markMessageRead(caller, messageId, readTimestampMs)` | |
+| **未读列表（角标/会话列表）** | `getUnreadSessionMessageIds(caller, imSessionId, limit)` | 返回 **messageId** 列表。 |
+| **回复（引用）** | 先发消息 → **`storeMessageReplyRelation`**（Ed25519 + canonical）→ 展示侧 **`getMessageReplyRelation`** | 须 **MM1 验签** 链路，禁止绕过直调 MM2（**§0 第4条**）。 |
+| **编辑** | **`editMessage`**（canonical + 公钥来自 **`storeUserData` type `0x45444A31`**）→ **`getMessageEditState`** | 规则：**editCount&lt;3**、时间窗等见 **§2.2**。 |
+| **删除 / 撤回** | **`deleteMessage`** 或 **`recallMessage`**（同一套 **senderId + 签名** 约束） | 走 **`MessageRecallManager`**。 |
+| **会话心跳 / 是否活跃 / 清理过期会话** | **`touchSession`**、`getSessionStatus`、`cleanupExpiredSessions` | IM 通道活跃表见 **`03-Business/04-Session.md`**、**§2.7**。 |
+| **清理某会话过期消息** | **`cleanupSessionMessages(caller, imSessionId)`** | |
+| **发图片/文件（分片）** | **`storeFileChunk`** → … → **`completeFile`**；异常 **`cancelFile`** | 续传断点：**`storeTransferResumeChunkIndex`** / **`getTransferResumeChunkIndex`** / **`cleanupTransferResumeChunkIndex`**；完整性见 **§2.6**、**`03-Storage.md`**。 |
+| **好友** | **`sendFriendRequest`** → **`respondFriendRequest`**；列表 **`getFriends`**；删 **`deleteFriend`** | 均含时间戳 + Ed25519；见 **§2.4**。 |
+| **群** | **`createGroup`**、**`inviteMember`**、**`removeMember`**、**`leaveGroup`**、**`getGroupMembers`**、**`updateGroupKey`** | 角色与 SQLite 校验见 **§2.5**。 |
+| **群 @ / 禁言 / 群名** | **`validateMentionRequest`**（@ 前）→ **`recordMentionAtAllUsage`**（@ALL 后）；**`muteMember`** / **`isMuted`** / **`unmuteMember`**；**`updateGroupName`** / **`getGroupName`** | @ALL 速率窗持久化见 **`mm1_mention_atall_window`**。 |
+| **多设备登录登记** | **`registerDeviceSession`**、**`updateLastActive`**、**`getDeviceSessions`**、**`cleanupExpiredDeviceSessions`** | Java 返回 **`null`/`byte[0]`/16B 踢出 id** 语义见 **§2.7**。 |
+| **在线状态（最后已知）** | **`getUserStatus`** | 与服务端权威的关系见 **`UserStatusManager`** / **§2.7**。 |
+| **用户扩展资料 / Ed25519 公钥** | **`storeUserData`** / **`getUserData`** / **`deleteUserData`** | **type** 由产品约定；编辑消息公钥 **type=`0x45444A31`**。 |
+| **好友备注（加密笔记）** | **`updateFriendNote`** | 见 **§2.9**。 |
+| **账号本地注销标记** | **`deleteAccount`**、**`isAccountDeleted`** | **非**全库擦除；见 **`06-AccountDelete.md`**。 |
+| **主密钥 / 会话密钥** | **`generateMasterKey`**、**`refreshSessionKey`** | 见 **§2.9**；**禁止** JNI 侧绕过 **`MM1`** 失锁直访 **`GetKeyManagement()`**。 |
+| **主密钥轮换** | **`rotateKeys`** | **`MM1::RefreshMasterKey()`**（锁内），**§2.9**。 |
+| **TLS 证书固定（SPKI Pin）与封禁** | **`configurePinnedPublicKeyHashes`**、**`verifyPinnedServerCertificate`**、**`isClientBanned`**、**`recordFailure`**、**`clearBan`** | **`caller` 可空**等规则见 **`JniSecurityPolicy.h`**、**§2.9**。 |
+| **JNI 环境自检** | **`validateJniCall()`** / **`validateJniCall(Class)`** | **§2.10**；退化路径，**不得**作为唯一安全边界。 |
+| **运维 / 紧急** | **`cleanupExpiredData`**、**`optimizeStorage`**、**`getStorageStatus`**、**`getMessageCount`**、**`getFileCount`**、**`emergencyWipe`** 等 | 见 **§2.8**、**§2.9**。 |
+
+### 0.5.1 本库**不**通过 JNI 提供的常见能力（须在 App / 服务端补齐）
+
+以下在典型 IM 里很常见，但 **当前 `JniInterface` 无对应入口**（或仅部分相关），文档**不**应让读者误以为 native 已包圆：
+
+| 能力 | 说明 |
+|------|------|
+| **用户注册 / 开户 / 忘记密码（B1）** | **§0.5.1.1**：业务域在 **HTTPS + 服务端**；客户端用 **`auth`** 与 **`userId` + 不透明 `token`** 接入 native 会话。 |
+| **实时在线推送 / WebSocket / FCM** | **无** JNI；收到推送后仍用 **`storeMessage`** 等写本地或只更新 UI。 |
+| **服务端历史漫游全量同步协议** | native 提供 **拉取/存储原语**（**`listMessages*`**、**`getSessionMessages`** 等），**同步策略与游标持久化**由上层实现。 |
+| **批量写消息（事务一批）** | **`MM2::StoreMessages`** 等 **C++ API** 存在时**未必**暴露 JNI；Java 侧若需批量须 **新增 JNI** 或循环 **`storeMessage`**（语义不同，见 **`05`**）。 |
+| **语音通话 / 视频会议（B5）** | **§0.5.1.2**：RTC 与 ZChatIM **JNI 解耦**；无通话类 native API。 |
+| **全文搜索 / 复杂筛选** | 以 **`MessageQueryManager`** 已有能力为界；更强搜索属产品扩展。 |
+
+#### 0.5.1.1 用户注册、开户与忘记密码（B1）
+
+**边界**：**`JniInterface` 不提供** `register` / `signUp` / `resetPassword` 等 JNI。账户生命周期（手机号/邮箱验证、人机验证、密码策略、风控）均属 **App + 业务 HTTPS API**。
+
+**与本库的衔接（推荐顺序）**：
+
+1. **注册 / 首次开户**：服务端创建账号并返回（或后续登录返回）**`userId`（16B 二进制，与全库 ID 约定一致）** + **长期或会话级不透明凭证**。
+2. **客户端**：**`initialize` / `initializeWithPassphrase`** 成功（本地可信区 + MM2）。
+3. **调用 `auth(userId, token, clientIp?)`**：将服务端签发的 **`token`** 作为 **`AuthSessionManager`** 要求的**不透明凭证**（长度、非全零、不得与 **`userId` 等长且逐字节相同** 等见 **`docs/03-Business/02-Auth.md`**、本文 **§2.1**）。成功则得到 **`callerSessionId`**，后续所有业务 JNI 首参携带该句柄。
+4. **忘记密码 / 重置**：仍走 **服务端重置流程**；重置成功后下发**新 `token`（或短期换票链）**，客户端再次 **`auth`** 即可。**无需**也**不应**在 native 层实现「改密 API」替代服务端校验。
+
+**代码闭环（与实现一致，避免「已登录却无法调业务」）**：
+
+- **`JniBridge::Auth`**：若 **`m_initialized` 为 false**（**`initialize` / `initializeWithPassphrase` 未成功**），直接返回**空** `sessionId`（**`src/jni/JniBridge.cpp`**）。故 **必须先初始化桥接，再 `auth`**。
+- **`AuthSessionManager::Auth`**：若 **`userId.size() != USER_ID_SIZE`（16B）**，返回空；**`token`** 须满足 **§2.1** / **`02-Auth.md` 第7.1节**（≥**`AUTH_OPAQUE_CREDENTIAL_MIN_BYTES`**、非全零等）。
+- **仓库内另有** **`LocalAccountCredentialManager`**（本地口令注册/改密/恢复等）**源文件**，当前**未**接入 **`MM1` 门面**与 **`JniInterface` / `JniNatives`**，**Java/Kotlin 不可达**；与「无注册 JNI」**不矛盾**。若未来产品要暴露，须**新增 JNI** 并同步 **`01-JNI.md`**。
+
+**可选后续**：**`storeUserData`** 绑定 **Ed25519 公钥（type `0x45444A31`）** 等，供 **`editMessage`** / **`sendFriendRequest`** 等链路的验签；与「是否已注册」正交，由产品在 **`auth` 成功后**按需写入。
+
+#### 0.5.1.2 语音通话与视频会议（B5）
+
+**边界**：**实时音视频（VoIP、群视频、屏幕共享等）不在 ZChatIM JNI 契约内**。本仓库 **不提供** 采集、编码、SRTP/WebRTC、厂商 RTC SDK 的封装或 JNI 入口。
+
+**集成方式**：
+
+- **信令**：由 **独立信令服务**（WebSocket/HTTP）与 **App 业务层**实现；可与 IM 服务端同域或分域。
+- **媒体面**：使用 **WebRTC、即构、声网、运营商 SDK** 等，与 **`JniBridge` / MM1 / MM2** 进程内可并存，但**无强制数据路径**经过 **`storeMessage`**。
+- **聊天记录中的「通话记录」**（可选）：若产品要在会话里显示「语音聊天 3 分钟」等，可自行定义 **消息 payload** 走 **`storeMessage`**，或仅服务端漫游、**本地不落 native**——均属产品协议，**非**本库内置类型。
+
+**小结**：B5 与 B1 类似，属于 **App + 第三方或服务端栈**；ZChatIM native 专注 **本地可信存储、会话、消息、好友/群、文件分片、证书 Pin** 等已列 API。
+
+**避免与源码目录误解**：**`ZChatIM/src/mm1/managers/`** 下存在 **`VoiceVideoCallManager`、`RtcCallManager`、`RtcCallSessionManager`、`MediaCallCoordinator`** 等，头文件注明 **无 RTP/WebRTC 媒体面**、仅为**进程内呼叫状态 / callId 占位**；上述 API **未**出现在 **`JniInterface.h`** 与 **`jni/JniNatives.cpp`**，**不属于 JNI 契约**。grep 到这些文件与 **「B5：无通话类 JNI」** 同时成立。
+
+### 0.5.2 产品 / UI 常见但**无专门 JNI**（由 App、服务端或约定 KV 补齐）
+
+下列能力在成品 IM 里很常见；当前契约**没有**与之 1:1 的独立 native 方法，实现上通常走 **HTTP/实时通道**、**App 状态**或 **`storeUserData` 自定义 type**（需自行约定版本与迁移）。
+
+| 场景 | 建议 |
+|------|------|
+| **草稿箱 / 发送队列 / 失败重试** | App 内存或自建存储；成功后再调 **`storeMessage`** / 文件分片 API。 |
+| **正在输入（typing）** | 无 JNI；走服务端推送/WebSocket，UI 只展示。 |
+| **会话列表：置顶、免打扰、归档、隐藏、排序** | 无专用 JNI；可用 **`storeUserData`** 按 **userId + 约定 type** 持久化，或仅存 App DB。 |
+| **删除或「清空」整个会话** | 无单一「删会话」JNI；策略由产品定（逐条 **`deleteMessage`**、或仅清 UI + 服务端同步策略等）。 |
+| **转发 / 合并转发 / 导出聊天记录** | 无专用转发 JNI；可多条 **`storeMessage`** 或上层打包 **payload**；导出多为 App 侧组装。 |
+| **红包、转账、业务卡片、结构化消息** | native 不解析业务语义；密文/明文 **payload** 与协议由上层定义。 |
+| **黑名单、联系人分组/标签** | 无专用 JNI；服务端权威 + 本地缓存或 **`storeUserData`** 约定 type。 |
+| **群公告、邀请链接、二维码入群** | 多为**服务端**；若需本地草稿可用 KV 扩展。 |
+| **群主转让、管理员升降级** | 以 **`GroupManager`** + **`group_members.role`** 的**实际 C++ 能力**为准；若无单独 JNI，可能落在既有 **`inviteMember`/`removeMember`** 等流程或尚未暴露——以源码与 **`01-MM1.md`** 为准。 |
+| **多端已读回执「对方已读」展示** | 服务端同步已读事件；本地仍用 **`markMessageRead`** 更新己方状态。 |
+| **换机迁移、备份与恢复** | 密钥 + 数据目录策略；无统一「一键迁移」JNI。 |
+| **弱网、仅 WiFi 下载媒体、重试策略** | 上层网络层；**`getStorageStatus`** / 计数类 API 可辅助「空间不足」提示。 |
+| **缩略图、图片压缩、音视频转码** | 上层（native 仅收/存 **chunk** 与 **sha256** 等）。 |
+| **应用前后台切换** | 无专用 API；需要保活会话时可顺带 **`touchSession`**（**§2.7**）。 |
+
+### 0.5.3 阅读顺序建议
+
+1. 本表（**§0.5**）定路线 → 2. **`01-JNI.md`** 查签名、**principal**、返回编码 → 3. 本文 **§2** 查安全细则与禁止项 → 4. **§0.5.1～0.5.2** 区分「架构不提供」与「无专门 JNI」以免误期。
 
 ## 1. 命名与返回语义约定
 1. 返回 `true`/`false`：true 表示该操作已成功完成；false 表示失败或安全校验未通过。
@@ -30,8 +141,12 @@
 ### 2.0 生命周期（与 `docs/06-Appendix/01-JNI.md`「零、生命周期」一致）
 #### `initialize(dataDir, indexDir) -> true/false` / `Initialize(const std::string&, const std::string&)`（C++）
 职责：完成可信区与 JNI 桥初始化：**`MM1::Initialize`** + **`MM2::Initialize(dataDir, indexDir)`**（两路径须非空）。
-安全注意：未 `Initialize` 成功前，其余 JNI 入口应拒绝或返回失败语义。
+安全注意：未 `Initialize` 成功前，其余 JNI 入口应拒绝或返回失败语义。**桥接层**用 **`std::atomic<bool>`** 表示「已 **`Initialize` 成功」**，避免与其它线程无锁状态查询发生数据竞争（见 **§0 第7条**）。
 Java：`com.yhj.zchat.jni.ZChatIMNative.initialize(String, String)`；native 由 **`jni/JniNatives.cpp`** **`RegisterNatives`** 绑定。
+
+#### `initializeWithPassphrase(dataDir, indexDir, messageKeyPassphrase) -> true/false` / `InitializeWithPassphrase(..., const char*)`（C++）
+职责：同 **`initialize`**，但将 **UTF-8 口令 C 串**（可为 **`nullptr`**）传入 **`MM2::Initialize`**，用于 **ZMKP** 新库或解锁已有 **ZMKP** 的 **`mm2_message_key.bin`**（须 **`ZCHATIM_USE_SQLCIPHER=ON`**；空串口令由 MM2 拒绝）。**`passphrase == null`** 时 native 传 **`nullptr`**，与 **`initialize`** 等价。
+Java：`ZChatIMNative.initializeWithPassphrase(String, String, String)`。
 
 #### `cleanup() -> void` / `Cleanup()`（C++）
 职责：与 `initialize` 对称释放资源。
@@ -39,7 +154,7 @@ Java：`com.yhj.zchat.jni.ZChatIMNative.initialize(String, String)`；native 由
 ### 2.1 认证模块
 #### `auth(userId, token, clientIp?) -> sessionId/null`
 职责：对用户进行身份认证并建立会话。
-安全注意：限流/封禁由 `mm1::AuthSessionManager` 按 `docs/03-Business/02-Auth.md` 实现；JniBridge 不应重复实现。`clientIp` 为空时仅**用户级** 10 次/分钟；**非空**（建议 IPv4 4 字节 / IPv6 16 字节）时额外启用 **IP 级** 5 次/分钟，且封禁索引为 `userId‖clientIp`。
+安全注意：限流/封禁由 `mm1::AuthSessionManager` 按 `docs/03-Business/02-Auth.md` 实现；JniBridge 不应重复实现。**`token`**：不透明凭证须 **`≥ Types::AUTH_OPAQUE_CREDENTIAL_MIN_BYTES`（32）**、**非全零**，且**不得**与 **`userId` 等长且逐字节相同**（**`VerifyCredential`**）。`clientIp` 为空时仅**用户级** 10 次/分钟；**非空**（建议 IPv4 4 字节 / IPv6 16 字节）时额外启用 **IP 级** 5 次/分钟，且封禁索引为 `userId‖clientIp`。
 入参：`userId`、`token`、**`clientIp`（`bytes`，可空向量）**。
 返回：`sessionId`（成功）或空向量（失败/无会话/限流/封禁）。
 路由实现规划：`m_mm1.GetAuthSessionManager().Auth(userId, token, clientIp)`（C++ 默认参数可省略第三参，生产环境建议从连接上下文填入 IP）。
@@ -53,18 +168,18 @@ Java：`com.yhj.zchat.jni.ZChatIMNative.initialize(String, String)`；native 由
 
 #### `destroySession(callerSessionId, sessionIdToDestroy) -> true/false`
 职责：在已认证操作者上下文中销毁目标会话并清除 MM1 内存态（Level2 行为由实现决定）。
-安全注意：实现 MUST 校验 `callerSessionId` 有效，且仅允许销毁与 principal 绑定的 `sessionIdToDestroy`（或具备等价运维授权）。
+安全注意：**当前 `JniBridge`**：`callerSessionId` 与 `sessionIdToDestroy` **均须有效**，且 **`TryGetSessionUserId` 解析出的 `principal` 须相同**（与 **`01-JNI.md`「双会话同一 principal」** 一致）；**无**单独的运维/RBAC 代销毁路径。
 入参：`callerSessionId`、`sessionIdToDestroy`。
 返回：true 成功，false 失败。
-路由实现规划：调用 `m_mm1.GetAuthSessionManager().DestroySession(...)`（或带授权检查的包装）。
+路由：**已实现** — **`JniBridge` → `AuthSessionManager::DestroySession(sessionIdToDestroy)`**（前置双会话 principal 校验）。
 
 ### 2.2 消息模块
 #### `storeMessage(callerSessionId, imSessionId, payload) -> msgId/null`
-职责：存储一条消息密文到 MM2。
-安全注意：须先 **`TryBindCaller`**（有效 caller）；**`imSessionId`** 为聊天会话通道（**16B**，非 ZSP 头 4 字节）；**当前 `JniBridge` 不**校验 **`imSessionId == principal`**（见 **`01-JNI.md` 绑定矩阵**）；不进行撤回/签名校验（这些属于 Recall/Delete 或 Edit 等能力域）。
+职责：存储一条消息密文到 MM2（**进程内 RAM**，不落 SQLite **`im_messages`**）。
+安全注意：须先 **`TryBindCaller`**（有效 caller）；**`imSessionId`** 为聊天会话通道（**16B**，非 ZSP 头 4 字节）；**当前 `JniBridge` 不**校验 **`imSessionId == principal`**（见 **`01-JNI.md` 绑定矩阵**）。**`principal`（16B）作为本条消息的 `senderUserId`** 写入 **MM2 RAM IM 行**（与历史 **`im_messages.sender_user_id`** 语义一致），供 **`MessageEditManager` / `MessageRecallManager`** 与 API 中的 **`senderId`** 做 **`ConstantTimeCompare`**。客户端**发送**消息时须使用**与内容作者一致**的会话/`Auth` **`userId`**。
 入参：`callerSessionId`、`imSessionId`、`payload`。
 返回：`msgId` 成功返回，空 vector 表示失败。
-路由实现规划：JniBridge 调用 `mm2::MM2::StoreMessage(...)`。
+路由：**已实现** — **`JniBridge` → `MM2::StoreMessage(imSessionId, principal, payload, out)`**。
 
 #### `retrieveMessage(callerSessionId, messageId) -> data/null`
 职责：根据消息 ID 检索消息内容（密文或封装数据）。
@@ -75,7 +190,7 @@ Java：`com.yhj.zchat.jni.ZChatIMNative.initialize(String, String)`；native 由
 
 #### `deleteMessage(callerSessionId, messageId, senderId, signatureEd25519) -> true/false`
 职责：安全删除/撤回等价能力入口（契约语义对齐 MessageRecall）。
-安全注意：必须走 `mm1::MessageRecallManager` 完成签名与“仅发送者可撤回”的校验与 Level2 覆写。
+安全注意：**`senderId` MUST 与 principal 一致**；**`MessageRecallManager`** 先比对 **RAM 内 `senderUserId`**（**`MM2::GetMessageSenderUserId`**）与 **`senderId`**，再 **`ZChatIM|RecallMessage|v1`** **Ed25519** 验签；最后 Level2 覆写。须走 `mm1::MessageRecallManager`，禁止直调 **`MM2::DeleteMessage`**。
 入参：`callerSessionId`、`messageId`、`senderId`、`signatureEd25519`。
 返回：true 成功，false 失败/校验未通过。
 路由实现规划：调用 `m_mm1.GetMessageRecallManager().DeleteMessage(...)`（或等价 Recall 语义）。
@@ -83,7 +198,7 @@ Java：`com.yhj.zchat.jni.ZChatIMNative.initialize(String, String)`；native 由
 
 #### `recallMessage(callerSessionId, messageId, senderId, signatureEd25519) -> true/false`
 职责：安全撤回消息（Level2 覆写与索引状态更新）。
-安全注意：同 deleteMessage 的签名校验与发送者权限校验。
+安全注意：同 **`deleteMessage`**（**`sender_user_id`** 绑定 + 验签 + **`MessageRecallManager`**）。
 入参：`callerSessionId`、`messageId`、`senderId`、`signatureEd25519`。
 返回：true 成功，false 失败。
 路由实现规划：调用 `m_mm1.GetMessageRecallManager().RecallMessage(...)`。
@@ -96,10 +211,10 @@ Java：`com.yhj.zchat.jni.ZChatIMNative.initialize(String, String)`；native 由
 路由实现规划：查询应走 `mm2::MM2::GetMessageQueryManager()`（`MessageQueryManager` 为 MM2 成员，与索引/.zdb 同生命周期）；不得在 JniBridge 侧单独 new 查询器。
 
 #### `listMessagesSinceTimestamp(callerSessionId, userId, sinceTimestampMs, count) -> array`
-职责：消息同步按时间戳游标拉取。
+职责：消息同步按时间戳游标拉取（**RAM 行 `stored_at_ms`**：本地 **`StoreMessage`** 写入时刻的 Unix 毫秒；**`>= sinceTimestampMs`** inclusive；与历史 SQLite 列语义一致）。
 入参：`callerSessionId`、`userId`、`sinceTimestampMs`（毫秒 epoch）、`count`。
 返回：二维数组。
-路由实现规划：走 `mm2::MM2::GetMessageQueryManager().ListMessagesSinceTimestamp(...)`。
+路由实现规划：走 `mm2::MM2::GetMessageQueryManager().ListMessagesSinceTimestamp(...)`（已实装）。
 
 #### `listMessagesSinceMessageId(callerSessionId, userId, lastMsgId, count) -> array`
 职责：消息同步按最后消息 ID 游标拉取。
@@ -140,10 +255,12 @@ Java：`com.yhj.zchat.jni.ZChatIMNative.initialize(String, String)`；native 由
 
 #### `editMessage(callerSessionId, messageId, newEncryptedContent, editTimestampSeconds, signature, senderId) -> true/false`
 职责：编辑消息密文与更新编辑状态。
-安全注意：编辑权限校验由 MM1 管理器完成（时间窗、editCount 上限、签名验证、发送者身份一致等）。
+安全注意：**`senderId` MUST 与 principal 一致**；**`signature`（64B Ed25519 分离签名）** 在 **canonical payload** 上验证；**公钥**来自 **`UserDataManager::GetUserData(senderId, 0x45444A31)`**（32B）。
+**Canonical payload（定长拼接，无额外分隔符）**：ASCII **`ZChatIM|EditMessage|v1`** ‖ **`messageId`(16)** ‖ **`senderId`(16)** ‖ **`editTimestampSeconds`（u64 大端）** ‖ **`SHA-256(newEncryptedContent)`（32）**。
+业务规则（与 **`MessageEditManager::ApplyEdit`** 一致）：**`edit_count < 3`**；若 **`edit_count > 0`** 则 **`editTimestampSeconds ≥ lastEdit`** 且 **`editTimestampSeconds - lastEdit ≤ 300`（秒）**；成功则 **`MM2::EditMessage(..., newEditCount = c+1)`**。**`CheckEditAllowed`** 仅状态/时间窗（**不**验签）。
 入参：`callerSessionId`、`messageId`、`newEncryptedContent`、`editTimestampSeconds`、`signature`、`senderId`。
 返回：true 成功，false 失败。
-路由实现规划：调用 `m_mm1.GetMessageEditOrchestration().EditMessage(...)` 或对等校验入口。
+路由：**已实现** — `JniBridge` → **`m_mm1.GetMessageEditOrchestration().EditMessage(...)`** → **`MessageEditManager::ApplyEdit`**。
 
 #### `getMessageEditState(callerSessionId, messageId) -> bytes(payload)`
 职责：返回编辑状态（editCount 与 lastEditTimeSeconds 打包）。
@@ -158,7 +275,7 @@ Java：`com.yhj.zchat.jni.ZChatIMNative.initialize(String, String)`；native 由
 安全注意：输入 data 由上层加密/封装后传入；MM1/MM2 只按类型存取；须绑定 `userId` 与 principal。
 入参：`callerSessionId`、`userId`、`type`、`data`。
 返回：true 成功，false 失败。
-**已实现**：`JniBridge::StoreUserData` → `mm1::UserDataManager::StoreUserData` → **`MM2::StoreMm1UserDataBlob`**（**MM2 已 Initialize** 时写入元库表 **`mm1_user_kv`**，见 **`docs/02-Core/03-Storage.md`** v5）；**MM2 未初始化**时回退进程内内存表。
+**已实现**：`JniBridge::StoreUserData` → `mm1::UserDataManager::StoreUserData` → **`MM2::StoreMm1UserDataBlob`**（**MM2 已 Initialize** 时写入元库表 **`mm1_user_kv`**，见 **`docs/02-Core/03-Storage.md` 第2.6节**；元库 **`PRAGMA user_version=11`**）；**MM2 未初始化**时回退进程内内存表。
 
 #### `getUserData(callerSessionId, userId, type) -> data/null`
 职责：查询用户元数据。
@@ -210,14 +327,15 @@ Java：`com.yhj.zchat.jni.ZChatIMNative.initialize(String, String)`；native 由
 
 #### Mention
 `validateMentionRequest(callerSessionId, groupId, senderId, mentionType, mentionedUserIds, nowMs, signatureEd25519) -> true/false`
-职责：校验 @ 触发权限与成员合法性，并执行 @ALL 频率限制前置判断。
-安全注意：必须用 `signatureEd25519` 校验发送者身份；返回 true 才能执行下一步记录。
-路由实现规划：调用 `mm1::MentionPermissionManager::ValidateMentionRequest(...)`。
+职责：校验 @ 触发权限与成员合法性；**成员/角色**经 **`MM2` → `group_members` SQL**。**@ALL** 时校验 **owner/admin** 与 **60s 滑动窗内已用次数 <3**（与 **`recordMentionAtAllUsage`** 共享元库 **`mm1_mention_atall_window`**，**`user_version=11`**；**进程重启可恢复**，须 **`MM2::Initialize`**）。
+安全注意：**`senderId` MUST 与 principal 一致**；**`signatureEd25519`（64B）** 验签；**公钥 `0x45444A31`**。
+**Canonical payload**：ASCII **`ZChatIM|MentionRequest|v1`** ‖ **`groupId`(16)** ‖ **`senderId`(16)** ‖ **`mentionType`（i32 BE）** ‖ **`nowMs`（u64 BE）** ‖ **`count`（i32 BE，`mentionedUserIds.size()`）** ‖ 每个 **`mentionedUserId`(16)**。**`mentionType=1`**：被 @ 用户须均在群且列表非空。**`mentionType=2`**：**@ALL**，发送者须 **admin/owner**。
+路由：**已实现** — **`mm1::MentionPermissionManager::ValidateMentionRequest`**。
 
 `recordMentionAtAllUsage(callerSessionId, groupId, senderId, nowMs) -> true/false`
-职责：记录一次 @ALL 使用次数，用于速率限制。
-安全注意：只能在 validateMentionRequest 返回 true 后调用，且 nowMs 必须与校验时的 nowMs 语义一致。
-路由实现规划：调用 `mm1::MentionPermissionManager::RecordMentionAtAllUsage(...)`。
+职责：向 **(groupId, senderId)** 的 **@ALL** 速率窗追加一次 **`nowMs`**（窗内 **≥3** 则失败）；须发送者在群。
+安全注意：**建议**在 **`validateMentionRequest`（type=2）** 通过后立即调用，且 **`nowMs`** 与签名载荷一致，否则可能出现「校验通过但记录失败」或窗状态与签名不一致。
+路由：**已实现** — **`MentionPermissionManager::RecordMentionAtAllUsage`**。
 
 #### GroupMute
 `muteMember(callerSessionId, groupId, userId, mutedBy, startTimeMs, durationSeconds, reason) -> true/false`
@@ -225,7 +343,7 @@ Java：`com.yhj.zchat.jni.ZChatIMNative.initialize(String, String)`；native 由
 `unmuteMember(callerSessionId, groupId, userId, unmutedBy) -> true/false`
 职责：禁言、查询禁言状态、解禁。
 安全注意：**`mutedBy` / `unmutedBy`** 须为群内 **owner/admin**；**admin** 仅可禁言 **member**；**不可**禁 **owner**。**`IsMuted`** 仅校验 **caller**。
-路由：**`JniBridge` → `mm1::GroupMuteManager`** → **`MM2` / `mm2_group_mute`**（**`03-Storage.md`**）。
+路由：**`JniBridge` → `mm1::GroupMuteManager`** → **`MM2` / `mm2_group_mute`**（**`03-Storage.md`**）。**`removeMember` / `leaveGroup`** 经 **`MM2::DeleteGroupMemberForMm1`** 会先 **`DELETE` 对应 `(group_id, user_id)` 禁言行**，再删 **`group_members`**，避免退群/踢人后残留禁言索引。
 
 #### GroupName
 `updateGroupName(callerSessionId, groupId, updaterId, newGroupName, nowMs) -> true/false`
@@ -272,7 +390,9 @@ Java：`com.yhj.zchat.jni.ZChatIMNative.initialize(String, String)`；native 由
 `cleanupExpiredSessions(callerSessionId, nowMs)`：清理超时会话，走 MM1（定时任务须持有效运维/系统会话，由实现定义）。
 `registerDeviceSession(callerSessionId, userId, deviceId, sessionId, loginTimeMs, lastActiveMs)`：最多 2 设备；踢最早设备，走 MM1 `DeviceSessionManager`。C++：**`bool` + `outKickedSessionId`**。Java：**`null`**=失败；**`byte[0]`**=成功且无踢出；**长度 16**=被踢出的设备会话 id。
 `updateLastActive`、`getDeviceSessions`、`cleanupExpiredDeviceSessions`：同理，首参 `callerSessionId`，走 MM1。
-`getUserStatus(callerSessionId, userId)`：在线/离线，走 MM1 `UserStatusManager`。
+
+**持久化**：上述多设备 API 经 **`MM2` → `SqliteMetadataDb`** 写 **`mm1_device_sessions`** 等（元库 **`user_version=11`**，见 **`03-Storage.md`**）；须 **`initialize`（MM2）已成功**。**`EmergencyWipe` / `CleanupAllData`** 删除元库文件后登记清空。**`TouchSession` / `GetSessionStatus`（IM 通道）** 对应 **`mm1_im_session_activity`**，规则同 **`docs/03-Business/04-Session.md` 第七节**。
+`getUserStatus(callerSessionId, userId)`：在线/离线，走 MM1 **`UserStatusManager`** → **`mm1_user_status`**（**最后已知**缓存；**服务端**权威，须 **`MM2::Initialize`**）。
 `cleanupSessionMessages(callerSessionId, imSessionId)`：清理会话过期消息，走 MM2。
 
 ### 2.8 数据清理与统计
@@ -286,12 +406,12 @@ Java：`com.yhj.zchat.jni.ZChatIMNative.initialize(String, String)`；native 由
 
 ### 2.9 安全运维/密钥/证书固定/注销/好友备注
 #### 密钥与运维
-`generateMasterKey(callerSessionId)`：密钥管理，走 `MM1::GenerateMasterKey()` 或 `MM1::GetKeyManagement().GenerateMasterKey()`（实现须统一数据源，避免两套主密钥状态）。
+`generateMasterKey(callerSessionId)`：走 **`MM1::GenerateMasterKey()`**（生成后**写入** `KeyManagement` 主密钥槽，**`getStatus` 的 `mm1_master_key_present`** 为 **`1`**；**禁止** JNI 侧绕过 `MM1` 失锁调 `GetKeyManagement()`）。
 
-`refreshSessionKey(callerSessionId)`：走 **`MM1::GetKeyManagement().RefreshSessionKey()`**（`MM1` 顶层无同名方法，不得凭空实现）。
-`emergencyWipe(callerSessionId)`：紧急销毁，走 MM1 `SystemControl`（须强授权）。
-`getStatus(callerSessionId)`：系统状态，走 MM1。
-`rotateKeys(callerSessionId)`：密钥轮换，走 MM1。
+`refreshSessionKey(callerSessionId)`：走 **`MM1::RefreshSessionKey()`**（递归锁内委托 `KeyManagement::RefreshSessionKey`）。
+`emergencyWipe(callerSessionId)`：**`JniBridge`** → **`MM1::EmergencyTrustedZoneWipe`**（清库 + Auth + 多设备 + 在线 + 证书 Pin + IM 活跃 + @ALL 限速 + 主密钥 + **`MM1::Cleanup`**）+ 桥接去初始化（**`m_initialized.store(false, std::memory_order_release)`**，**`std::atomic<bool>`**）。**纯 C++** 若仅 **`SystemControl::EmergencyWipe`** 则**不**改 **`JniBridge::m_initialized`**（见 **`01-MM1.md`**）。
+`getStatus(callerSessionId)`：返回 **`jni_bridge_initialized` / `mm2_initialized` / `mm1_master_key_present`**（字符串 **`0`/`1`**）。
+`rotateKeys(callerSessionId)`：走 **`MM1::RefreshMasterKey()`**（锁内）。
 
 #### 证书固定（SPKI SHA-256 Pin）
 `configurePinnedPublicKeyHashes(callerSessionId, currentSpkiSha256, standbySpkiSha256)`
@@ -305,13 +425,17 @@ Java：`com.yhj.zchat.jni.ZChatIMNative.initialize(String, String)`；native 由
 #### 账户注销
 `deleteAccount(callerSessionId, userId, reauthToken, secondConfirmToken)`
 `isAccountDeleted(callerSessionId, userId)`
-职责：注销触发 Level3 销毁与注销状态查询。
-安全注意：reAuth 与 secondConfirm 必须由实现完成有效性校验（契约上由入参承载）。
+职责：本地注销标记与查询（**非**全库自动擦除）。
+安全注意：**`userId` MUST 与 principal 一致**；**`reauthToken` 与 `secondConfirmToken` 须同长 ≥16B 且逐字节相同**（**`ConstantTimeCompare`**）。成功则写 **`mm1_user_kv`** **`type=0x41434431`（'ACD1'）** 墓碑 **`{1}`**；**不**调用 **`MM2::CleanupAllData`**。
+路由：**已实现** — **`mm1::AccountDeleteManager`**。
 
 #### 好友备注
 `updateFriendNote(callerSessionId, userId, friendId, newEncryptedNote, updateTimestampSeconds, signatureEd25519)`
-职责：更新好友备注。
-安全注意：签名与身份校验由 MM1 `FriendNoteManager` 或等价校验入口完成。
+职责：更新好友备注（密文/明文由上层定义，本层对 **`newEncryptedNote`** 做 **SHA-256** 纳入签名）。
+安全注意：**`userId` MUST 与 principal 一致**；**公钥 `0x45444A31`**；**`friendId`** 须在 **`FriendManager::GetFriends(userId)`**（accepted）中。
+**Canonical payload**：**`ZChatIM|UpdateFriendNote|v1`** ‖ **`userId`(16)** ‖ **`friendId`(16)** ‖ **`updateTimestampSeconds`（u64 BE）** ‖ **`SHA-256(newEncryptedNote)`（32）**。
+持久化：**`mm1_user_kv`** **`type=0x464E424E`（'FNBN'）**，**`ZFN1`** + **`friendId(16)‖len u32 BE‖note`**，单条 **note ≤64KiB**。
+路由：**已实现** — **`mm1::FriendNoteManager`**。
 
 ### 2.10 JNI 调用验证
 `validateJniCall() -> true/false`
@@ -321,6 +445,8 @@ Java：`com.yhj.zchat.jni.ZChatIMNative.initialize(String, String)`；native 由
 `validateJniCall(jniEnv, jclass) -> true/false`（`JniInterface`/`JniBridge` 以 `void*` 承载指针，避免头文件依赖 `jni.h`）
 职责：**优先在 JNI 入口使用**：将 env/class 转交 `mm1::MM1::ValidateJniCall(env, class)`（或等价 `JniSecurity` 校验）。
 无参版本仅可作为退化路径（如非 JNI 调用方），不得作为唯一安全边界。
+
+**`JniSecurity` 辅助堆缓冲区**（非 JVM 直接缓冲）：**`AllocateJniMemory` / `FreeJniMemory`** 当前委托 **`common::Memory::Allocate` / `Free`**（分配成功则 **`SecureZero`**）；契约见 **`include/mm1/JniSecurity.h`**、**`docs/07-Engineering/02-Cpp-Completion-Roadmap.md` M0**。
 
 ## 3. 规划的实现（实现闭环的建议步骤）
 本节给出可执行的实现规划，用来保证“接口闭环 + 安全不变量 + StorageIntegrity + SQLite 校验闭环”同时满足。

@@ -46,7 +46,7 @@ cd ZChatIM && cmake -B build && cmake --build build --config Release
 | **全平台（唯一方式）** | **`sqlite3.c`** + **`sqlite3.h`** | **默认**：**`ZChatIM/thirdparty/sqlcipher/`** 下 amalgamation；**Windows 可选**：**`prebuilt/windows-x64/amalgamation/`**（若存在则优先）。**OpenSSL 3** 与 MM2 / MM1 **共用**（**不需要** **`libsqlcipher-dev`**）。 |
 
 - **关闭 SQLCipher**（仅本地调试明文索引）：**`-DZCHATIM_USE_SQLCIPHER=OFF`** → 回退 **`thirdparty/sqlite/sqlite3.c`**，**勿**用于需「离线 `.db` 不可读」的产品形态。
-- **密钥与 PRAGMA** 以 **`docs/02-Core/03-Storage.md` §4.2** 为准（域分离派生、固定 **`cipher_page_size` / `kdf_iter` / HMAC-KDF 算法**）。
+- **密钥与 PRAGMA** 以 **`docs/02-Core/03-Storage.md` 第4.2节** 为准（域分离派生、固定 **`cipher_page_size` / `kdf_iter` / HMAC-KDF 算法**）。
 
 ## 3. Windows 本地配置步骤
 
@@ -85,14 +85,14 @@ cd ZChatIM && cmake -B build && cmake --build build --config Release
 
 **`ZCHATIM_BUILD_EXE=OFF`** 时不生成 **`ZChatIM`** 可执行目标。
 
-默认 **`ZCHATIM_BUILD_EXE=ON`**、**`ZCHATIM_BUILD_TESTS=OFF`**：`ZChatIM` **仅**编 **`main.cpp`**（更小 EXE、更快链接）。需要树内自检时再打开测试：
+默认 **`ZCHATIM_BUILD_EXE=ON`**、**`ZCHATIM_BUILD_TESTS=ON`**：`ZChatIM` 会编译 **`tests/common_tools_test.cpp`**、**`tests/mm1_managers_test.cpp`**、**`tests/mm2_fifty_scenarios_test.cpp`**、**`tests/jni_im_smoke_test.cpp`**。控制台 **`--test`** **一次跑完全部**（**`RunMM1ManagerTests`** 内顺序：**`RunCommonToolsTests`** → 各 MM1/MM2 **`[CASE]`** → **minimal MM2**（**`RunMinimalScenarioTestCasesMerged`**）→ **MM2 fifty** → **JNI IM smoke**；见 **`05-ZChatIM-Implementation-Status.md`**）。**不再提供** **`--test-common` / `--test-minimal` / `--test-mm250` / `--test-jni-im`**（误打 **`--test-…`** 会提示使用 **`--test`**）。
+
+若只要最小控制台 EXE（**仅 `main.cpp`**、不依赖 **`tests/*.cpp`**）：
 
 ```bash
-cmake -B build -DZCHATIM_BUILD_TESTS=ON
+cmake -B build -DZCHATIM_BUILD_TESTS=OFF
 cmake --build build --config Release
 ```
-
-**`ZCHATIM_BUILD_TESTS=ON`** 时会追加 **`tests/common_tools_test.cpp`**、**`tests/mm1_managers_test.cpp`**、**`tests/mm2_fifty_scenarios_test.cpp`**、**`tests/jni_im_smoke_test.cpp`**。控制台 **`--test`** **一次跑完全部**（**`RunMM1ManagerTests`** 内顺序：**`RunCommonToolsTests`** → 各 MM1/MM2 **`[CASE]`** → **minimal MM2**（**`RunMinimalScenarioTestCasesMerged`**）→ **MM2 fifty** → **JNI IM smoke**；见 **`05-ZChatIM-Implementation-Status.md`**）。**不再提供** **`--test-common` / `--test-minimal` / `--test-mm250` / `--test-jni-im`**（误打 **`--test-…`** 会提示使用 **`--test`**）。
 
 此时运行 **`--test`** 会打印未编入测试的提示并以**非零退出码**结束；**无法识别的 `--test…` 参数**（如旧版 **`--test-mm250`**）为退出码 **2** 并提示改用 **`--test`**。
 

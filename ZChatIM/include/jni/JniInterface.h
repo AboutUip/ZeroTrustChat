@@ -12,6 +12,7 @@ namespace ZChatIM
         // JNI 接口（C++ 侧契约；Java 经 jni/JniNatives.cpp RegisterNatives 绑定）
         // -------------------------------------------------------------
         // 最高安全性契约：除 Initialize / Cleanup / Auth / VerifySession /
+        // RegisterLocalUser / AuthWithLocalPassword / HasLocalPassword / ResetLocalPasswordWithRecovery /
         // ValidateJniCall* 外，业务 API 首参均为 callerSessionId
         // （长度 Types::JNI_AUTH_SESSION_TOKEN_BYTES，与 Auth 返回句柄一致）。
         // 会话有效：JniBridge 用 TryGetSessionUserId(caller, principal)，与 VerifySession 等价。
@@ -29,6 +30,10 @@ namespace ZChatIM
             // =============================================================
 
             static bool Initialize(const std::string& dataDir, const std::string& indexDir);
+            static bool InitializeWithPassphrase(
+                const std::string& dataDir,
+                const std::string& indexDir,
+                const char*        messageKeyPassphraseUtf8);
             static void Cleanup();
 
             // =============================================================
@@ -44,6 +49,57 @@ namespace ZChatIM
             static bool DestroySession(
                 const std::vector<uint8_t>& callerSessionId,
                 const std::vector<uint8_t>& sessionIdToDestroy);
+
+            // 本地账户（**mm1_user_kv** **LPH1/LRC1**；须 **MM2** 已 **Initialize**；与 **`auth`(token)** 并存）
+            static bool RegisterLocalUser(
+                const std::vector<uint8_t>& userId,
+                const std::vector<uint8_t>& passwordUtf8,
+                const std::vector<uint8_t>& recoverySecretUtf8);
+
+            static std::vector<uint8_t> AuthWithLocalPassword(
+                const std::vector<uint8_t>& userId,
+                const std::vector<uint8_t>& passwordUtf8,
+                const std::vector<uint8_t>& clientIp = {});
+
+            static bool HasLocalPassword(const std::vector<uint8_t>& userId);
+
+            static bool ChangeLocalPassword(
+                const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& userId,
+                const std::vector<uint8_t>& oldPasswordUtf8,
+                const std::vector<uint8_t>& newPasswordUtf8);
+
+            static bool ResetLocalPasswordWithRecovery(
+                const std::vector<uint8_t>& userId,
+                const std::vector<uint8_t>& recoverySecretUtf8,
+                const std::vector<uint8_t>& newPasswordUtf8,
+                const std::vector<uint8_t>& clientIp = {});
+
+            // RTC：**进程内** callId/状态（**无** WebRTC 媒体）；**callKind**：**`RTC_CALL_KIND_AUDIO`**=0 / **VIDEO**=1
+            static std::vector<uint8_t> RtcStartCall(
+                const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& peerUserId,
+                int32_t callKind);
+
+            static bool RtcAcceptCall(
+                const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& callId);
+
+            static bool RtcRejectCall(
+                const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& callId);
+
+            static bool RtcEndCall(
+                const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& callId);
+
+            static int32_t RtcGetCallState(
+                const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& callId);
+
+            static int32_t RtcGetCallKind(
+                const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& callId);
 
             // =============================================================
             // 消息操作

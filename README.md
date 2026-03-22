@@ -118,7 +118,7 @@ cmake --build build --config Release
 | :---: | :--- |
 | **全平台** | **OpenSSL 3.x**（**MM2** AES-GCM / PBKDF2 / RNG、**MM1** Ed25519 **`EVP`**、**SQLCipher**、**`common::Random`** 等）；**Windows** 另 **`crypt32`**（**DPAPI** `mm2_message_key.bin`）；缺失时 CMake **`FATAL_ERROR`** |
 | **VS 多配置** | 命令行加 **`--config Release`**（或 IDE 中选 Release） |
-| **树内测试** | 默认 **`ZCHATIM_BUILD_TESTS=OFF`**（仅 **`main.cpp`**）；需要自检时 **`-DZCHATIM_BUILD_TESTS=ON`** 编 **`ZChatIM/tests/*.cpp`**，**`ZChatIM --test`** 一次跑 common + MM1/MM2 + **minimal MM2** + MM2-50 + JNI IM smoke → [构建说明 §7](docs/07-Engineering/01-Build-ZChatIM.md) |
+| **树内测试** | 默认 **`ZCHATIM_BUILD_TESTS=ON`**，编译 **`ZChatIM/tests/*.cpp`**，**`ZChatIM --test`** 一次跑 common + MM1/MM2 + **minimal MM2** + MM2-50 + JNI IM smoke；最小 exe 时 **`-DZCHATIM_BUILD_TESTS=OFF`** → [构建说明 第7节](docs/07-Engineering/01-Build-ZChatIM.md#7-控制台-exe-与树内测试) |
 
 ---
 
@@ -129,9 +129,10 @@ cmake --build build --config Release
 | **可信基极小化** | 敏感逻辑在 **MM1 / MM2**；网关按不可信区处理 |
 | **Java 不持密** | 业务层不承载安全载荷明文 |
 | **JNI 边界** | `callerSessionId` 等与 **[01-JNI.md](docs/06-Appendix/01-JNI.md)**、`JniSecurityPolicy.h` 一致 |
-| **加密落盘** | 密文在 **`.zdb`**；SQLite 仅索引与元数据（[03-Storage.md](docs/02-Core/03-Storage.md)） |
+| **持久化从严** | **凡落盘即增加泄露面**；**默认最小化**；仅允许经**白名单 + 生命周期**审定的数据进入 **SQLite / `.zdb`**；**能内存则内存**，**禁止**为省事扩大持久化面 |
+| **加密落盘** | 对**获准**落盘的数据：**密文在 `.zdb`**、元数据侧 **SQLCipher（默认）**（[03-Storage.md](docs/02-Core/03-Storage.md)）；**未获准不得落盘** |
 
-冲突与权威链 → **[docs/README.md 第 2 节](docs/README.md)**。
+冲突与权威链 → **[docs/README.md 第 2 节](docs/README.md)**（含**持久化立场**与**当前实现**事实区分）。
 
 ---
 

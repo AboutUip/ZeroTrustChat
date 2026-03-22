@@ -4,10 +4,11 @@
 #include "../common/JniSecurityPolicy.h"
 #include "../mm1/MM1.h"
 #include "../mm2/MM2.h"
-#include <string>
-#include <vector>
+#include <atomic>
 #include <map>
 #include <mutex>
+#include <string>
+#include <vector>
 
 namespace ZChatIM
 {
@@ -26,6 +27,11 @@ namespace ZChatIM
 
             // dataDir / indexDir：须非空；路由至 MM2::Initialize（见 JniSecurityPolicy / 01-JNI.md）。
             bool Initialize(const std::string& dataDir, const std::string& indexDir);
+            // **`messageKeyPassphraseUtf8`**：非空指针且 C 串非空 → **`MM2::Initialize(..., passphrase)`**（**ZMKP** 等，须 **`ZCHATIM_USE_SQLCIPHER=ON`**）；**`nullptr`** 与两参数 **`Initialize`** 等价。
+            bool Initialize(
+                const std::string& dataDir,
+                const std::string& indexDir,
+                const char*        messageKeyPassphraseUtf8);
             void Cleanup();
 
             // =============================================================
@@ -40,6 +46,55 @@ namespace ZChatIM
             bool DestroySession(
                 const std::vector<uint8_t>& callerSessionId,
                 const std::vector<uint8_t>& sessionIdToDestroy);
+
+            bool RegisterLocalUser(
+                const std::vector<uint8_t>& userId,
+                const std::vector<uint8_t>& passwordUtf8,
+                const std::vector<uint8_t>& recoverySecretUtf8);
+
+            std::vector<uint8_t> AuthWithLocalPassword(
+                const std::vector<uint8_t>& userId,
+                const std::vector<uint8_t>& passwordUtf8,
+                const std::vector<uint8_t>& clientIp = {});
+
+            bool HasLocalPassword(const std::vector<uint8_t>& userId);
+
+            bool ChangeLocalPassword(
+                const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& userId,
+                const std::vector<uint8_t>& oldPasswordUtf8,
+                const std::vector<uint8_t>& newPasswordUtf8);
+
+            bool ResetLocalPasswordWithRecovery(
+                const std::vector<uint8_t>& userId,
+                const std::vector<uint8_t>& recoverySecretUtf8,
+                const std::vector<uint8_t>& newPasswordUtf8,
+                const std::vector<uint8_t>& clientIp = {});
+
+            std::vector<uint8_t> RtcStartCall(
+                const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& peerUserId,
+                int32_t callKind);
+
+            bool RtcAcceptCall(
+                const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& callId);
+
+            bool RtcRejectCall(
+                const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& callId);
+
+            bool RtcEndCall(
+                const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& callId);
+
+            int32_t RtcGetCallState(
+                const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& callId);
+
+            int32_t RtcGetCallKind(
+                const std::vector<uint8_t>& callerSessionId,
+                const std::vector<uint8_t>& callId);
 
             // =============================================================
             // 消息操作
@@ -434,7 +489,8 @@ namespace ZChatIM
             bool CheckInitialized();
             void LogOperation(const std::string& operation, bool success);
 
-            bool m_initialized;
+            // **`CheckInitialized()`** 无桥接锁读取；须 **atomic** 与 **`Initialize`/`Cleanup`/`EmergencyWipe`** 的 store **release/acquire** 成对，避免数据竞争。
+            std::atomic<bool> m_initialized{false};
             mutable std::recursive_mutex m_apiRecursiveMutex;
 
             mm1::MM1& m_mm1;

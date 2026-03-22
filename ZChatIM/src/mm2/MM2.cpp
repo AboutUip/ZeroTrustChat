@@ -1,4 +1,5 @@
 // MM2 实现：文件分片等路径打通 ZdbManager + SqliteMetadataDb + StorageIntegrityManager（见 MM2.h 注释）。
+// IM（StoreMessage / List* / MarkRead / 回复 / 编辑）：仅进程内 RAM（ImRam）；元库无 im_messages / im_message_reply（user_version=11）。
 //
 // StoreFileChunk：WriteData 成功后若 GetFileStatus / UpsertZdbFile / ComputeSha256 / RecordDataBlockHash 失败，
 // 调用 RevertFailedPutDataBlockUnlocked（与 PutDataBlockBlobUnlocked 一致），减少孤儿尾块与索引不一致。
@@ -6,6 +7,7 @@
 #include "mm2/MM2.h"
 #include "mm2/crypto/Sha256.h"
 #include "mm2/storage/Crypto.h"
+#include "common/Memory.h"
 
 #include <chrono>
 #include "Types.h"
@@ -14,11 +16,19 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
 #include <limits>
 #include <fstream>
 #include <filesystem>
 #include <string>
 #include <utility>
+#include <string_view>
+
+namespace ZChatIM::mm2::detail::message_key_passphrase {
+    bool IsZmkpV1(const std::vector<uint8_t>& raw);
+    bool ParseZmkpV1(const std::vector<uint8_t>& raw, std::string_view passphraseUtf8, std::vector<uint8_t>& outMaster32, std::string& errOut);
+    bool BuildZmkpV1Blob(const uint8_t master32[ZChatIM::CRYPTO_KEY_SIZE], std::string_view passphraseUtf8, std::vector<uint8_t>& outBlob, std::string& errOut);
+} // namespace ZChatIM::mm2::detail::message_key_passphrase
 
 #if !defined(_WIN32)
 #    include <unistd.h>
@@ -142,15 +152,11 @@ namespace ZChatIM::mm2 {
             return true;
         }
 
-        bool ReadMessageKeyFileWin32(const std::filesystem::path& keyPath, std::vector<uint8_t>& outKey, std::string& errOut)
+        static bool ParseMessageKeyFromRawWin32(const std::vector<uint8_t>& raw, std::vector<uint8_t>& outKey, std::string& errOut)
         {
             outKey.clear();
-            std::vector<uint8_t> raw;
-            if (!ReadAllBytesMessageKeyFileWin32(keyPath, raw, errOut)) {
-                return false;
-            }
             if (raw.size() == ZChatIM::CRYPTO_KEY_SIZE) {
-                outKey = std::move(raw);
+                outKey = raw;
                 return true;
             }
             if (raw.size() < 4U + sizeof(uint32_t)) {
@@ -169,6 +175,39 @@ namespace ZChatIM::mm2 {
                 return false;
             }
             return UnprotectMm2MessageKeyBlob(raw.data() + 8, static_cast<DWORD>(blobLen), outKey, errOut);
+        }
+
+        bool ReadMessageKeyFileWin32(const std::filesystem::path& keyPath, std::vector<uint8_t>& outKey, std::string& errOut)
+        {
+            std::vector<uint8_t> raw;
+            if (!ReadAllBytesMessageKeyFileWin32(keyPath, raw, errOut)) {
+                return false;
+            }
+            return ParseMessageKeyFromRawWin32(raw, outKey, errOut);
+        }
+
+        static bool WriteRawBytesMessageKeyFileWin32(const std::filesystem::path& keyPath, const std::vector<uint8_t>& blob, std::string& errOut)
+        {
+            FILE* f = nullptr;
+#    if defined(_MSC_VER)
+            if (_wfopen_s(&f, keyPath.native().c_str(), L"wb") != 0 || f == nullptr) {
+                errOut = "cannot open mm2_message_key.bin for write";
+                return false;
+            }
+#    else
+            f = _wfopen(keyPath.native().c_str(), L"wb");
+            if (f == nullptr) {
+                errOut = "cannot open mm2_message_key.bin for write";
+                return false;
+            }
+#    endif
+            const size_t w = std::fwrite(blob.data(), 1, blob.size(), f);
+            std::fclose(f);
+            if (w != blob.size()) {
+                errOut = "writing mm2_message_key.bin failed (incomplete write)";
+                return false;
+            }
+            return true;
         }
 
         bool WriteMessageKeyFileWin32(const std::filesystem::path& keyPath, const uint8_t* data, std::string& errOut)
@@ -455,20 +494,16 @@ namespace ZChatIM::mm2 {
             return true;
         }
 
-        static bool ReadMessageKeyFilePosix(
-            const std::filesystem::path& keyPath,
-            const std::string&           indexDirUtf8,
-            std::vector<uint8_t>&        outKey,
-            std::string&                 errOut)
+        static bool ParseMessageKeyFromRawPosix(
+            const std::vector<uint8_t>& raw,
+            const std::string&          indexDirUtf8,
+            std::vector<uint8_t>&       outKey,
+            std::string&                errOut)
         {
             outKey.clear();
             errOut.clear();
-            std::vector<uint8_t> raw;
-            if (!ReadAllBytesMessageKeyFilePosix(keyPath, raw, errOut)) {
-                return false;
-            }
             if (raw.size() == ZChatIM::CRYPTO_KEY_SIZE) {
-                outKey = std::move(raw);
+                outKey = raw;
                 return true;
             }
             if (raw.size() >= 4U && std::memcmp(raw.data(), kMm2MessageKeyMagicZmk1, 4U) == 0) {
@@ -500,6 +535,35 @@ namespace ZChatIM::mm2 {
             }
             errOut = "mm2_message_key.bin: unknown format (expected 32-byte legacy or ZMK2/ZMK3)";
             return false;
+        }
+
+        static bool ReadMessageKeyFilePosix(
+            const std::filesystem::path& keyPath,
+            const std::string&           indexDirUtf8,
+            std::vector<uint8_t>&        outKey,
+            std::string&                 errOut)
+        {
+            std::vector<uint8_t> raw;
+            if (!ReadAllBytesMessageKeyFilePosix(keyPath, raw, errOut)) {
+                return false;
+            }
+            return ParseMessageKeyFromRawPosix(raw, indexDirUtf8, outKey, errOut);
+        }
+
+        static bool WriteRawBytesMessageKeyFilePosix(const std::filesystem::path& keyPath, const std::vector<uint8_t>& blob, std::string& errOut)
+        {
+            errOut.clear();
+            std::ofstream out(keyPath, std::ios::binary | std::ios::trunc);
+            if (!out) {
+                errOut = "cannot open mm2_message_key.bin for write";
+                return false;
+            }
+            out.write(reinterpret_cast<const char*>(blob.data()), static_cast<std::streamsize>(blob.size()));
+            if (!out) {
+                errOut = "writing mm2_message_key.bin failed";
+                return false;
+            }
+            return true;
         }
 #endif // !defined(_WIN32)
 
@@ -539,6 +603,12 @@ namespace ZChatIM::mm2 {
             return std::vector<uint8_t>(full, full + ZChatIM::MESSAGE_ID_SIZE);
         }
 
+        bool BytesEq(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b)
+        {
+            return a.size() == b.size()
+                && (a.empty() || std::memcmp(a.data(), b.data(), a.size()) == 0);
+        }
+
     } // namespace
 
     std::atomic<uint64_t> MM2::s_sequence{1};
@@ -575,6 +645,7 @@ namespace ZChatIM::mm2 {
     void MM2::CleanupUnlocked()
     {
         m_messageQueryManager.SetOwner(nullptr);
+        ImRamClearUnlocked();
         // 与 EnsureMessageCryptoReadyUnlocked / Crypto::Init 成对；并擦除内存中的消息密钥材料。
         if (!m_messageStorageKey.empty()) {
             SecureZeroBytes(m_messageStorageKey.data(), m_messageStorageKey.size());
@@ -586,6 +657,190 @@ namespace ZChatIM::mm2 {
         m_storageIntegrityManager.Bind(nullptr);
         m_sessionCache.clear();
         m_initialized = false;
+    }
+
+    void MM2::ImRamClearUnlocked()
+    {
+        m_imRamBySession.clear();
+        m_imRamMsgToSession.clear();
+        m_imRamReplies.clear();
+    }
+
+    void MM2::ImRamClearSessionUnlocked(const std::vector<uint8_t>& sessionId)
+    {
+        auto it = m_imRamBySession.find(sessionId);
+        if (it == m_imRamBySession.end()) {
+            return;
+        }
+        for (const auto& row : it->second) {
+            m_imRamMsgToSession.erase(row.messageId);
+            m_imRamReplies.erase(row.messageId);
+        }
+        m_imRamBySession.erase(it);
+    }
+
+    bool MM2::ImRamExistsUnlocked(const std::vector<uint8_t>& messageId)
+    {
+        return m_imRamMsgToSession.find(messageId) != m_imRamMsgToSession.end();
+    }
+
+    bool MM2::ImRamLocateUnlocked(const std::vector<uint8_t>& messageId, ImRamMessageRow** outRow)
+    {
+        if (outRow == nullptr) {
+            return false;
+        }
+        *outRow = nullptr;
+        auto itS = m_imRamMsgToSession.find(messageId);
+        if (itS == m_imRamMsgToSession.end()) {
+            return false;
+        }
+        auto itV = m_imRamBySession.find(itS->second);
+        if (itV == m_imRamBySession.end()) {
+            return false;
+        }
+        for (auto& row : itV->second) {
+            if (BytesEq(row.messageId, messageId)) {
+                *outRow = &row;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool MM2::ImRamInsertRowUnlocked(const std::vector<uint8_t>& sessionId, ImRamMessageRow row)
+    {
+        if (m_imRamMsgToSession.find(row.messageId) != m_imRamMsgToSession.end()) {
+            SetLastError("ImRamInsertRow: duplicate message_id");
+            return false;
+        }
+        const std::vector<uint8_t> midCopy = row.messageId;
+        m_imRamBySession[sessionId].push_back(std::move(row));
+        m_imRamMsgToSession[midCopy] = sessionId;
+        return true;
+    }
+
+    bool MM2::ImRamEraseUnlocked(const std::vector<uint8_t>& messageId)
+    {
+        auto itMap = m_imRamMsgToSession.find(messageId);
+        if (itMap == m_imRamMsgToSession.end()) {
+            return false;
+        }
+        const std::vector<uint8_t> sessionId = itMap->second;
+
+        auto vit = m_imRamBySession.find(sessionId);
+        if (vit == m_imRamBySession.end()) {
+            // Stale msg→session entry (session bucket already gone).
+            m_imRamMsgToSession.erase(itMap);
+            m_imRamReplies.erase(messageId);
+            return true;
+        }
+        auto& vec = vit->second;
+        for (size_t i = 0; i < vec.size(); ++i) {
+            if (BytesEq(vec[i].messageId, messageId)) {
+                vec.erase(vec.begin() + static_cast<std::ptrdiff_t>(i));
+                if (vec.empty()) {
+                    m_imRamBySession.erase(vit);
+                }
+                m_imRamMsgToSession.erase(messageId);
+                m_imRamReplies.erase(messageId);
+                return true;
+            }
+        }
+        // Map pointed to a session that does not contain this message_id — drop stale map entry only.
+        m_imRamMsgToSession.erase(itMap);
+        m_imRamReplies.erase(messageId);
+        return true;
+    }
+
+    bool MM2::ImRamListIdsLastNUnlocked(
+        const std::vector<uint8_t>& sessionId,
+        size_t                      limit,
+        std::vector<std::vector<uint8_t>>& outIds)
+    {
+        outIds.clear();
+        auto it = m_imRamBySession.find(sessionId);
+        if (it == m_imRamBySession.end() || limit == 0) {
+            return true;
+        }
+        const auto& vec = it->second;
+        const size_t n    = vec.size();
+        const size_t take = (n > limit) ? limit : n;
+        const size_t start = n - take;
+        outIds.reserve(take);
+        for (size_t i = start; i < n; ++i) {
+            outIds.push_back(vec[i].messageId);
+        }
+        return true;
+    }
+
+    bool MM2::ImRamListIdsChronologicalFirstNUnlocked(
+        const std::vector<uint8_t>& sessionId,
+        size_t                      limit,
+        std::vector<std::vector<uint8_t>>& outIds)
+    {
+        outIds.clear();
+        auto it = m_imRamBySession.find(sessionId);
+        if (it == m_imRamBySession.end() || limit == 0) {
+            return true;
+        }
+        const auto& vec = it->second;
+        const size_t take = (vec.size() > limit) ? limit : vec.size();
+        outIds.reserve(take);
+        for (size_t i = 0; i < take; ++i) {
+            outIds.push_back(vec[i].messageId);
+        }
+        return true;
+    }
+
+    bool MM2::ImRamListIdsSinceStoredAtUnlocked(
+        const std::vector<uint8_t>& sessionId,
+        int64_t                     sinceStoredAtMsInclusive,
+        size_t                      limit,
+        std::vector<std::vector<uint8_t>>& outIds)
+    {
+        outIds.clear();
+        auto it = m_imRamBySession.find(sessionId);
+        if (it == m_imRamBySession.end() || limit == 0) {
+            return true;
+        }
+        for (const auto& row : it->second) {
+            if (row.stored_at_ms < sinceStoredAtMsInclusive) {
+                continue;
+            }
+            outIds.push_back(row.messageId);
+            if (outIds.size() >= limit) {
+                break;
+            }
+        }
+        return true;
+    }
+
+    bool MM2::ImRamListIdsAfterMessageIdUnlocked(
+        const std::vector<uint8_t>& sessionId,
+        const std::vector<uint8_t>& afterMessageId,
+        size_t                      limit,
+        std::vector<std::vector<uint8_t>>& outIds)
+    {
+        outIds.clear();
+        auto it = m_imRamBySession.find(sessionId);
+        if (it == m_imRamBySession.end() || limit == 0) {
+            return true;
+        }
+        const auto& vec = it->second;
+        size_t       j  = vec.size();
+        for (size_t i = 0; i < vec.size(); ++i) {
+            if (BytesEq(vec[i].messageId, afterMessageId)) {
+                j = i + 1;
+                break;
+            }
+        }
+        if (j >= vec.size()) {
+            return true;
+        }
+        for (size_t i = j; i < vec.size() && outIds.size() < limit; ++i) {
+            outIds.push_back(vec[i].messageId);
+        }
+        return true;
     }
 
     void MM2::Cleanup()
@@ -660,9 +915,31 @@ namespace ZChatIM::mm2 {
 
     bool MM2::Initialize(const std::string& dataDir, const std::string& indexDir)
     {
+        return Initialize(dataDir, indexDir, nullptr);
+    }
+
+    bool MM2::Initialize(const std::string& dataDir, const std::string& indexDir, const char* messageKeyPassphraseUtf8)
+    {
         std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
         m_lastError.clear();
+#if !defined(ZCHATIM_USE_SQLCIPHER)
+        if (messageKeyPassphraseUtf8 != nullptr) {
+            SetLastError("Initialize: message key passphrase requires ZCHATIM_USE_SQLCIPHER=ON");
+            return false;
+        }
+#endif
+        if (messageKeyPassphraseUtf8 != nullptr && messageKeyPassphraseUtf8[0] == '\0') {
+            SetLastError("Initialize: empty passphrase not allowed");
+            return false;
+        }
+        return InitializeImplUnlocked(dataDir, indexDir, messageKeyPassphraseUtf8);
+    }
 
+    bool MM2::InitializeImplUnlocked(
+        const std::string& dataDir,
+        const std::string& indexDir,
+        const char*       optionalMessageKeyPassphraseUtf8)
+    {
         if (m_initialized) {
             CleanupUnlocked();
         }
@@ -707,7 +984,7 @@ namespace ZChatIM::mm2 {
             return false;
         }
 #if defined(ZCHATIM_USE_SQLCIPHER)
-        // 元数据 SQLCipher 密钥由消息主密钥域分离派生；须先 **`Crypto::Init`** + **`mm2_message_key.bin`**（与 **`03-Storage.md`** §4.2 一致）。
+        // 元数据 SQLCipher 密钥由消息主密钥域分离派生；须先 **`Crypto::Init`** + **`mm2_message_key.bin`**（与 **`03-Storage.md`** 第4.2节 一致）。
         if (!Crypto::Init()) {
             SetLastError("Crypto::Init failed (required for SQLCipher metadata key setup)");
             m_zdbManager.Cleanup();
@@ -716,7 +993,7 @@ namespace ZChatIM::mm2 {
             m_metadataDbPath.clear();
             return false;
         }
-        if (!LoadOrCreateMessageStorageKeyUnlocked()) {
+        if (!LoadOrCreateMessageStorageKeyUnlocked(optionalMessageKeyPassphraseUtf8)) {
             if (LastError().empty()) {
                 SetLastError("message storage key setup failed (SQLCipher metadata)");
             }
@@ -766,6 +1043,8 @@ namespace ZChatIM::mm2 {
             return false;
         }
         m_storageIntegrityManager.Bind(&m_metadataDb);
+        // 元库 **无** `im_messages`（IM 仅 RAM）；无需 purge/drop 迁移。
+        ImRamClearUnlocked();
         // 文件分片（StoreFileChunk）仅依赖 Zdb + SQLite + SIM，不要求消息密钥；消息加解密在 StoreMessage / GetSessionMessages / MessageQueryManager::List* 等路径再 EnsureMessageCryptoReadyUnlocked。
         m_initialized = true;
         m_messageQueryManager.SetOwner(this);
@@ -922,15 +1201,21 @@ namespace ZChatIM::mm2 {
         return true;
     }
 
-    bool MM2::LoadOrCreateMessageStorageKeyUnlocked()
+    bool MM2::LoadOrCreateMessageStorageKeyUnlocked(const char* optionalMessageKeyPassphraseUtf8)
     {
+        if (optionalMessageKeyPassphraseUtf8 != nullptr && optionalMessageKeyPassphraseUtf8[0] == '\0') {
+            SetLastError("LoadOrCreateMessageStorageKey: empty passphrase not allowed");
+            return false;
+        }
         m_messageStorageKey.clear();
         if (m_indexDir.empty()) {
             SetLastError("LoadOrCreateMessageStorageKey: indexDir empty");
             return false;
         }
         namespace fs = std::filesystem;
-        const fs::path keyPath = fs::path(m_indexDir) / "mm2_message_key.bin";
+        const fs::path     keyPath        = fs::path(m_indexDir) / "mm2_message_key.bin";
+        const std::string indexDirUtf8 =
+            fs::path(m_indexDir).lexically_normal().generic_string();
         std::error_code ec;
         const bool      keyFilePresent = fs::exists(keyPath, ec);
         if (ec) {
@@ -938,62 +1223,100 @@ namespace ZChatIM::mm2 {
             return false;
         }
         if (keyFilePresent) {
-#ifdef _WIN32
-            std::error_code      ecFsz;
-            const std::uintmax_t fszBefore = fs::file_size(keyPath, ecFsz);
-            std::vector<uint8_t> key;
+            std::vector<uint8_t> raw;
             std::string          readErr;
-            if (!ReadMessageKeyFileWin32(keyPath, key, readErr)) {
+#ifdef _WIN32
+            if (!ReadAllBytesMessageKeyFileWin32(keyPath, raw, readErr)) {
                 SetLastError(std::string("LoadOrCreateMessageStorageKey: ") + readErr);
                 return false;
             }
-            m_messageStorageKey = std::move(key);
-            // 旧版 32 字节明文 → 尽力改写为 ZMK1（DPAPI）；失败不阻止本次会话（例如目录只读）。
+#else
+            if (!ReadAllBytesMessageKeyFilePosix(keyPath, raw, readErr)) {
+                SetLastError(std::string("LoadOrCreateMessageStorageKey: ") + readErr);
+                return false;
+            }
+#endif
+            if (detail::message_key_passphrase::IsZmkpV1(raw)) {
+                if (optionalMessageKeyPassphraseUtf8 == nullptr) {
+                    SetLastError(
+                        "LoadOrCreateMessageStorageKey: ZMKP key file requires passphrase (use MM2::Initialize with passphrase)");
+                    return false;
+                }
+                std::string zerr;
+                if (!detail::message_key_passphrase::ParseZmkpV1(
+                        raw,
+                        std::string_view(optionalMessageKeyPassphraseUtf8),
+                        m_messageStorageKey,
+                        zerr)) {
+                    SetLastError(std::string("LoadOrCreateMessageStorageKey: ") + zerr);
+                    return false;
+                }
+                return true;
+            }
+            if (optionalMessageKeyPassphraseUtf8 != nullptr) {
+                SetLastError(
+                    "LoadOrCreateMessageStorageKey: passphrase provided but key file is not ZMKP (use Initialize without passphrase for ZMK1/2/3)");
+                return false;
+            }
+#ifdef _WIN32
+            std::error_code      ecFsz;
+            const std::uintmax_t fszBefore = fs::file_size(keyPath, ecFsz);
+            if (!ParseMessageKeyFromRawWin32(raw, m_messageStorageKey, readErr)) {
+                SetLastError(std::string("LoadOrCreateMessageStorageKey: ") + readErr);
+                return false;
+            }
             if (!ecFsz && fszBefore == ZChatIM::CRYPTO_KEY_SIZE) {
                 std::string migErr;
                 (void)WriteMessageKeyFileWin32(keyPath, m_messageStorageKey.data(), migErr);
             }
-            return true;
 #else
-            const std::string indexDirUtf8 =
-                std::filesystem::path(m_indexDir).lexically_normal().generic_string();
-            std::vector<uint8_t> key;
-            std::string          readErr;
-            if (!ReadMessageKeyFilePosix(keyPath, indexDirUtf8, key, readErr)) {
+            std::error_code      ecFsz;
+            const std::uintmax_t fszBefore = fs::file_size(keyPath, ecFsz);
+            if (!ParseMessageKeyFromRawPosix(raw, indexDirUtf8, m_messageStorageKey, readErr)) {
                 SetLastError(std::string("LoadOrCreateMessageStorageKey: ") + readErr);
                 return false;
             }
-            m_messageStorageKey = std::move(key);
-            // 旧版 32 字节明文 → 尽力改写为 **ZMK2**（Linux 等）或 **ZMK3**（Apple Keychain）。
-            std::error_code      ecFsz;
-            const std::uintmax_t fszBefore = fs::file_size(keyPath, ecFsz);
             if (!ecFsz && fszBefore == ZChatIM::CRYPTO_KEY_SIZE) {
                 std::string migErr;
                 (void)WriteMessageKeyFilePosix(keyPath, indexDirUtf8, m_messageStorageKey.data(), migErr);
             }
-            return true;
 #endif
+            return true;
         }
         std::vector<uint8_t> key = Crypto::GenerateKey(ZChatIM::CRYPTO_KEY_SIZE);
         if (key.size() != ZChatIM::CRYPTO_KEY_SIZE) {
             SetLastError("LoadOrCreateMessageStorageKey: Crypto::GenerateKey failed (secure random)");
             return false;
         }
-#ifdef _WIN32
         std::string writeErr;
-        if (!WriteMessageKeyFileWin32(keyPath, key.data(), writeErr)) {
-            SetLastError(std::string("LoadOrCreateMessageStorageKey: ") + writeErr);
-            return false;
-        }
+        if (optionalMessageKeyPassphraseUtf8 != nullptr) {
+            std::vector<uint8_t> zmkp;
+            if (!detail::message_key_passphrase::BuildZmkpV1Blob(
+                    key.data(),
+                    std::string_view(optionalMessageKeyPassphraseUtf8),
+                    zmkp,
+                    writeErr)) {
+                SetLastError(std::string("LoadOrCreateMessageStorageKey: ") + writeErr);
+                return false;
+            }
+#ifdef _WIN32
+            if (!WriteRawBytesMessageKeyFileWin32(keyPath, zmkp, writeErr)) {
 #else
-        const std::string indexDirUtf8 =
-            std::filesystem::path(m_indexDir).lexically_normal().generic_string();
-        std::string       writeErr;
-        if (!WriteMessageKeyFilePosix(keyPath, indexDirUtf8, key.data(), writeErr)) {
-            SetLastError(std::string("LoadOrCreateMessageStorageKey: ") + writeErr);
-            return false;
-        }
+            if (!WriteRawBytesMessageKeyFilePosix(keyPath, zmkp, writeErr)) {
 #endif
+                SetLastError(std::string("LoadOrCreateMessageStorageKey: ") + writeErr);
+                return false;
+            }
+        } else {
+#ifdef _WIN32
+            if (!WriteMessageKeyFileWin32(keyPath, key.data(), writeErr)) {
+#else
+            if (!WriteMessageKeyFilePosix(keyPath, indexDirUtf8, key.data(), writeErr)) {
+#endif
+                SetLastError(std::string("LoadOrCreateMessageStorageKey: ") + writeErr);
+                return false;
+            }
+        }
         m_messageStorageKey = std::move(key);
         return true;
     }
@@ -1007,7 +1330,7 @@ namespace ZChatIM::mm2 {
             SetLastError("Crypto::Init failed");
             return false;
         }
-        if (!LoadOrCreateMessageStorageKeyUnlocked()) {
+        if (!LoadOrCreateMessageStorageKeyUnlocked(nullptr)) {
             // LoadOrCreateMessageStorageKeyUnlocked 已 SetLastError 具体原因；此处仅在没有详情时兜底。
             if (LastError().empty()) {
                 SetLastError("message storage key setup failed");
@@ -1250,6 +1573,7 @@ namespace ZChatIM::mm2 {
 
     bool MM2::StoreMessage(
         const std::vector<uint8_t>& sessionId,
+        const std::vector<uint8_t>& senderUserId,
         const std::vector<uint8_t>& payload,
         std::vector<uint8_t>&       outMessageId)
     {
@@ -1262,6 +1586,10 @@ namespace ZChatIM::mm2 {
         }
         if (sessionId.size() != ZChatIM::USER_ID_SIZE) {
             SetLastError("StoreMessage: sessionId must be USER_ID_SIZE (16) bytes");
+            return false;
+        }
+        if (senderUserId.size() != ZChatIM::USER_ID_SIZE) {
+            SetLastError("StoreMessage: senderUserId must be USER_ID_SIZE (16) bytes");
             return false;
         }
         if (!EnsureMessageCryptoReadyUnlocked()) {
@@ -1307,32 +1635,24 @@ namespace ZChatIM::mm2 {
         blob.insert(blob.end(), ciphertext.begin(), ciphertext.end());
         blob.insert(blob.end(), tag, tag + sizeof(tag));
 
-        if (!PutDataBlockBlobUnlocked(messageId, 0, blob)) {
-            return false;
-        }
-        if (!m_metadataDb.InsertImMessage(sessionId, messageId)) {
-            const std::string imErr = m_metadataDb.LastError();
-            std::string       zf;
-            uint64_t          off = 0;
-            uint64_t          len = 0;
-            uint8_t           rowSha[ZChatIM::SHA256_SIZE]{};
-            if (m_metadataDb.GetDataBlock(messageId, 0, zf, off, len, rowSha)
-                && len <= static_cast<uint64_t>(SIZE_MAX)) {
-                if (!RevertFailedPutDataBlockUnlocked(messageId, 0, zf, off, static_cast<size_t>(len))) {
-                    const std::string revErr = m_lastError;
-                    SetLastError(imErr + " | compensation failed: " + revErr);
-                    return false;
-                }
-                SetLastError(imErr + " (im_messages insert failed; zdb tail scrubbed + data_blocks row dropped)");
-            } else {
-                SetLastError(imErr + " (im_messages insert failed; could not locate data_block for compensation)");
-            }
+        const int64_t storedAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::system_clock::now().time_since_epoch())
+                                       .count();
+        ImRamMessageRow row;
+        row.messageId       = messageId;
+        row.senderUserId    = senderUserId;
+        row.blob            = std::move(blob);
+        row.stored_at_ms    = storedAtMs;
+        row.has_read        = false;
+        row.read_at_ms      = 0;
+        row.edit_count      = 0;
+        row.last_edit_time_s = 0;
+        if (!ImRamInsertRowUnlocked(sessionId, std::move(row))) {
             return false;
         }
         outMessageId = std::move(messageId);
         return true;
     }
-
     bool MM2::RetrieveMessage(const std::vector<uint8_t>& messageId, std::vector<uint8_t>& outPayload)
     {
         std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
@@ -1350,21 +1670,13 @@ namespace ZChatIM::mm2 {
             return false;
         }
 
-        // 必须存在 im_messages 行，避免仅依赖 data_blocks 时误读非消息卷或陈旧行。
-        std::vector<uint8_t> sess;
-        if (!m_metadataDb.GetImMessageSession(messageId, sess)) {
-            SetLastError(m_metadataDb.LastError());
-            return false;
-        }
-        if (sess.size() != ZChatIM::USER_ID_SIZE) {
-            SetLastError("RetrieveMessage: invalid session_id in im_messages");
+        ImRamMessageRow* row = nullptr;
+        if (!ImRamLocateUnlocked(messageId, &row) || row == nullptr) {
+            SetLastError("RetrieveMessage: message not found (not in memory IM store)");
             return false;
         }
 
-        std::vector<uint8_t> blob;
-        if (!GetDataBlockBlobUnlocked(messageId, 0, blob)) {
-            return false;
-        }
+        const std::vector<uint8_t>& blob = row->blob;
         constexpr size_t kOverhead = ZChatIM::NONCE_SIZE + ZChatIM::AUTH_TAG_SIZE;
         if (blob.size() < kOverhead) {
             SetLastError("RetrieveMessage: stored blob too small");
@@ -1504,13 +1816,11 @@ namespace ZChatIM::mm2 {
         const size_t lim = (count > INT_MAX) ? static_cast<size_t>(INT_MAX) : static_cast<size_t>(count);
         std::vector<std::vector<uint8_t>> ids;
         if (lastMsgId.empty()) {
-            if (!m_metadataDb.ListImMessageIdsForSessionChronological(sessionId, lim, ids)) {
-                SetLastError(m_metadataDb.LastError());
+            if (!ImRamListIdsChronologicalFirstNUnlocked(sessionId, lim, ids)) {
                 return outRows;
             }
         } else {
-            if (!m_metadataDb.ListImMessageIdsForSessionAfterMessageId(sessionId, lastMsgId, lim, ids)) {
-                SetLastError(m_metadataDb.LastError());
+            if (!ImRamListIdsAfterMessageIdUnlocked(sessionId, lastMsgId, lim, ids)) {
                 return outRows;
             }
         }
@@ -1533,24 +1843,49 @@ namespace ZChatIM::mm2 {
 
     std::vector<std::vector<uint8_t>> MM2::InternalListMessagesSinceTimestampForQueryManager(
         const std::vector<uint8_t>& sessionId,
-        uint64_t                    /*sinceTimestampMs*/,
+        uint64_t                    sinceTimestampMs,
         int                         count)
     {
         std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
         m_lastError.clear();
+        std::vector<std::vector<uint8_t>> outRows;
         if (count <= 0) {
-            return {};
+            return outRows;
         }
         if (!m_initialized) {
             SetLastError("MM2 not initialized");
-            return {};
+            return outRows;
         }
         if (sessionId.size() != ZChatIM::USER_ID_SIZE) {
             SetLastError("ListMessagesSinceTimestamp: userId/sessionId must be USER_ID_SIZE (16) bytes");
-            return {};
+            return outRows;
         }
-        SetLastError("ListMessagesSinceTimestamp: not supported (im_messages has no server timestamp column)");
-        return {};
+        if (!EnsureMessageCryptoReadyUnlocked()) {
+            return outRows;
+        }
+        const int64_t sinceI64 = (sinceTimestampMs > static_cast<uint64_t>(INT64_MAX))
+            ? INT64_MAX
+            : static_cast<int64_t>(sinceTimestampMs);
+        const size_t lim = (count > INT_MAX) ? static_cast<size_t>(INT_MAX) : static_cast<size_t>(count);
+        std::vector<std::vector<uint8_t>> ids;
+        if (!ImRamListIdsSinceStoredAtUnlocked(sessionId, sinceI64, lim, ids)) {
+            return outRows;
+        }
+        for (const auto& mid : ids) {
+            std::vector<uint8_t> pl;
+            if (!RetrieveMessage(mid, pl)) {
+                outRows.clear();
+                return outRows;
+            }
+            std::vector<uint8_t> row = EncodeQueryMessageRow(mid, pl);
+            if (row.empty()) {
+                SetLastError("ListMessagesSinceTimestamp: encode row failed");
+                outRows.clear();
+                return outRows;
+            }
+            outRows.push_back(std::move(row));
+        }
+        return outRows;
     }
 
     bool MM2::GetStorageStatus(size_t& totalSpace, size_t& usedSpace, size_t& availableSpace)
@@ -1584,7 +1919,11 @@ namespace ZChatIM::mm2 {
             return 0;
         }
         m_lastError.clear();
-        return m_metadataDb.CountImMessages();
+        size_t n = 0;
+        for (const auto& pr : m_imRamBySession) {
+            n += pr.second.size();
+        }
+        return n;
     }
 
     bool MM2::CleanupAllData()
@@ -1639,32 +1978,9 @@ namespace ZChatIM::mm2 {
 
     bool MM2::DeleteMessageImplUnlocked(const std::vector<uint8_t>& messageId)
     {
-        const bool hasBlock = m_metadataDb.DataBlockExists(messageId, 0);
-        if (hasBlock) {
-            std::string zdbFileId;
-            uint64_t    off = 0;
-            uint64_t    len = 0;
-            uint8_t     sha[ZChatIM::SHA256_SIZE]{};
-            if (!m_metadataDb.GetDataBlock(messageId, 0, zdbFileId, off, len, sha)) {
-                SetLastError(m_metadataDb.LastError());
-                return false;
-            }
-            if (len > static_cast<uint64_t>(SIZE_MAX)) {
-                SetLastError("DeleteMessage: stored length invalid");
-                return false;
-            }
-            if (!m_zdbManager.OpenFile(zdbFileId)) {
-                SetLastError(m_zdbManager.LastError());
-                return false;
-            }
-            if (!m_zdbManager.DeleteData(zdbFileId, off, static_cast<size_t>(len))) {
-                SetLastError(m_zdbManager.LastError());
-                return false;
-            }
-        }
-
-        if (!m_metadataDb.DeleteMessageMetadataTransaction(messageId, hasBlock)) {
-            SetLastError(m_metadataDb.LastError());
+        // IM 仅内存：**仅**从 RAM 索引移除；磁盘 `data_blocks` 仅服务文件分片 / 群密钥等。
+        if (!ImRamEraseUnlocked(messageId)) {
+            SetLastError("DeleteMessageImplUnlocked: message not in IM RAM store");
             return false;
         }
         return true;
@@ -1736,8 +2052,8 @@ namespace ZChatIM::mm2 {
             SetLastError("DeleteMessage: messageId must be MESSAGE_ID_SIZE (16) bytes");
             return false;
         }
-        if (!m_metadataDb.ImMessageExists(messageId)) {
-            SetLastError("DeleteMessage: message not found (no im_messages row)");
+        if (!ImRamExistsUnlocked(messageId)) {
+            SetLastError("DeleteMessage: message not found (not in memory IM store)");
             return false;
         }
         return DeleteMessageImplUnlocked(messageId);
@@ -1756,12 +2072,17 @@ namespace ZChatIM::mm2 {
             return false;
         }
         if (readTimestampMs > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
-            SetLastError("MarkMessageRead: readTimestampMs exceeds int64_t range for SQLite binding");
+            SetLastError("MarkMessageRead: readTimestampMs exceeds int64_t range");
             return false;
         }
-        if (!m_metadataDb.MarkImMessageRead(messageId, static_cast<int64_t>(readTimestampMs))) {
-            SetLastError(m_metadataDb.LastError());
+        ImRamMessageRow* row = nullptr;
+        if (!ImRamLocateUnlocked(messageId, &row) || row == nullptr) {
+            SetLastError("MarkMessageRead: message not found (not in memory IM store)");
             return false;
+        }
+        if (!row->has_read) {
+            row->has_read   = true;
+            row->read_at_ms = static_cast<int64_t>(readTimestampMs);
         }
         return true;
     }
@@ -1785,14 +2106,18 @@ namespace ZChatIM::mm2 {
         if (limit == 0) {
             return true;
         }
-        std::vector<std::vector<uint8_t>> ids;
-        if (!m_metadataDb.ListUnreadImMessageIdsForSession(sessionId, limit, ids)) {
-            SetLastError(m_metadataDb.LastError());
-            return false;
+        auto it = m_imRamBySession.find(sessionId);
+        if (it == m_imRamBySession.end()) {
+            return true;
         }
-        outUnreadMessages.reserve(ids.size());
-        for (auto& id : ids) {
-            outUnreadMessages.emplace_back(std::move(id), 0ULL);
+        for (const auto& row : it->second) {
+            if (row.has_read) {
+                continue;
+            }
+            outUnreadMessages.emplace_back(row.messageId, 0ULL);
+            if (outUnreadMessages.size() >= limit) {
+                break;
+            }
         }
         return true;
     }
@@ -1814,14 +2139,70 @@ namespace ZChatIM::mm2 {
             SetLastError("StoreMessageReplyRelation: invalid id length");
             return false;
         }
-        if (!m_metadataDb.ImMessageExists(messageId)) {
-            SetLastError("StoreMessageReplyRelation: message not found (no im_messages row)");
+        if (repliedContentDigest.size() != ZChatIM::SHA256_SIZE) {
+            SetLastError("StoreMessageReplyRelation: repliedContentDigest must be SHA256_SIZE (32) bytes");
             return false;
         }
-        if (!m_metadataDb.UpsertImMessageReply(messageId, repliedMsgId, repliedSenderId, repliedContentDigest)) {
+        if (!ImRamExistsUnlocked(messageId)) {
+            SetLastError("StoreMessageReplyRelation: message not found (not in memory IM store)");
+            return false;
+        }
+        const auto itSessNew = m_imRamMsgToSession.find(messageId);
+        const auto itSessOld = m_imRamMsgToSession.find(repliedMsgId);
+        if (itSessNew == m_imRamMsgToSession.end() || itSessOld == m_imRamMsgToSession.end()) {
+            SetLastError("StoreMessageReplyRelation: session mapping missing for message or replied message");
+            return false;
+        }
+        if (itSessNew->second != itSessOld->second) {
+            SetLastError("StoreMessageReplyRelation: cross-session reply not allowed");
+            return false;
+        }
+        ImRamMessageRow* repliedRow = nullptr;
+        if (!ImRamLocateUnlocked(repliedMsgId, &repliedRow) || repliedRow == nullptr) {
+            SetLastError("StoreMessageReplyRelation: replied message row missing");
+            return false;
+        }
+        if (repliedRow->senderUserId.size() != ZChatIM::USER_ID_SIZE
+            || !common::Memory::ConstantTimeCompare(
+                repliedRow->senderUserId.data(),
+                repliedSenderId.data(),
+                ZChatIM::USER_ID_SIZE)) {
+            SetLastError("StoreMessageReplyRelation: repliedSenderId does not match stored sender");
+            return false;
+        }
+        const std::vector<uint8_t>& imSessionId = itSessNew->second;
+        bool                        isGroup    = false;
+        if (!m_metadataDb.GroupIdHasAnyMemberRow(imSessionId, isGroup)) {
             SetLastError(m_metadataDb.LastError());
             return false;
         }
+        if (isGroup) {
+            ImRamMessageRow* newRow = nullptr;
+            if (!ImRamLocateUnlocked(messageId, &newRow) || newRow == nullptr) {
+                SetLastError("StoreMessageReplyRelation: new message row missing");
+                return false;
+            }
+            bool existsReplyAuthor = false;
+            if (!m_metadataDb.GetGroupMemberRowExists(imSessionId, newRow->senderUserId, existsReplyAuthor)) {
+                SetLastError(m_metadataDb.LastError());
+                return false;
+            }
+            bool existsRepliedAuthor = false;
+            if (!m_metadataDb.GetGroupMemberRowExists(imSessionId, repliedSenderId, existsRepliedAuthor)) {
+                SetLastError(m_metadataDb.LastError());
+                return false;
+            }
+            if (!existsReplyAuthor || !existsRepliedAuthor) {
+                SetLastError("StoreMessageReplyRelation: group membership check failed (SQL)");
+                return false;
+            }
+        }
+        ImRamReplyRow rr;
+        rr.repliedMsgId     = repliedMsgId;
+        rr.repliedSenderId  = repliedSenderId;
+        rr.repliedDigest    = repliedContentDigest;
+        m_imRamReplies[messageId] = std::move(rr);
+        m_lastError.clear();
         return true;
     }
 
@@ -1844,10 +2225,14 @@ namespace ZChatIM::mm2 {
             SetLastError("GetMessageReplyRelation: messageId must be MESSAGE_ID_SIZE (16) bytes");
             return false;
         }
-        if (!m_metadataDb.GetImMessageReply(messageId, outRepliedMsgId, outRepliedSenderId, outRepliedContentDigest)) {
-            SetLastError(m_metadataDb.LastError());
+        auto itr = m_imRamReplies.find(messageId);
+        if (itr == m_imRamReplies.end()) {
+            SetLastError("GetMessageReplyRelation: no reply relation for message_id");
             return false;
         }
+        outRepliedMsgId          = itr->second.repliedMsgId;
+        outRepliedSenderId       = itr->second.repliedSenderId;
+        outRepliedContentDigest  = itr->second.repliedDigest;
         return true;
     }
 
@@ -1875,17 +2260,14 @@ namespace ZChatIM::mm2 {
             SetLastError("EditMessage: newEditCount must be in [1,3]");
             return false;
         }
-        if (!m_metadataDb.ImMessageExists(messageId)) {
-            SetLastError("EditMessage: message not found (no im_messages row)");
+        ImRamMessageRow* row = nullptr;
+        if (!ImRamLocateUnlocked(messageId, &row) || row == nullptr) {
+            SetLastError("EditMessage: message not found (not in memory IM store)");
             return false;
         }
-        if (!PutDataBlockBlobUnlocked(messageId, 0, newEncryptedContent)) {
-            return false;
-        }
-        if (!m_metadataDb.UpdateImMessageEditState(messageId, newEditCount, editTimestampSeconds)) {
-            SetLastError(m_metadataDb.LastError());
-            return false;
-        }
+        row->blob              = newEncryptedContent;
+        row->edit_count        = newEditCount;
+        row->last_edit_time_s  = editTimestampSeconds;
         return true;
     }
 
@@ -1906,15 +2288,47 @@ namespace ZChatIM::mm2 {
             SetLastError("GetMessageEditState: messageId must be MESSAGE_ID_SIZE (16) bytes");
             return false;
         }
-        if (!m_metadataDb.GetImMessageEditState(messageId, outEditCount, outLastEditTimeSeconds)) {
-            SetLastError(m_metadataDb.LastError());
+        ImRamMessageRow* row = nullptr;
+        if (!ImRamLocateUnlocked(messageId, &row) || row == nullptr) {
+            SetLastError("GetMessageEditState: message not found (not in memory IM store)");
             return false;
         }
+        outEditCount           = row->edit_count;
+        outLastEditTimeSeconds = row->last_edit_time_s;
+        return true;
+    }
+
+    bool MM2::GetMessageSenderUserId(
+        const std::vector<uint8_t>& messageId,
+        std::vector<uint8_t>&       outSenderUserId)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        outSenderUserId.clear();
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (messageId.size() != ZChatIM::MESSAGE_ID_SIZE) {
+            SetLastError("GetMessageSenderUserId: messageId must be MESSAGE_ID_SIZE (16) bytes");
+            return false;
+        }
+        ImRamMessageRow* row = nullptr;
+        if (!ImRamLocateUnlocked(messageId, &row) || row == nullptr) {
+            SetLastError("GetMessageSenderUserId: message not found (not in memory IM store)");
+            return false;
+        }
+        if (row->senderUserId.size() != ZChatIM::USER_ID_SIZE) {
+            SetLastError("GetMessageSenderUserId: sender_user_id invalid length");
+            return false;
+        }
+        outSenderUserId = row->senderUserId;
         return true;
     }
 
     bool MM2::StoreMessages(
         const std::vector<uint8_t>& sessionId,
+        const std::vector<uint8_t>& senderUserId,
         const std::vector<std::vector<uint8_t>>& payloads,
         std::vector<std::vector<uint8_t>>& outMessageIds)
     {
@@ -1929,13 +2343,17 @@ namespace ZChatIM::mm2 {
             SetLastError("StoreMessages: sessionId must be USER_ID_SIZE (16) bytes");
             return false;
         }
+        if (senderUserId.size() != ZChatIM::USER_ID_SIZE) {
+            SetLastError("StoreMessages: senderUserId must be USER_ID_SIZE (16) bytes");
+            return false;
+        }
         if (payloads.empty()) {
             return true;
         }
         outMessageIds.reserve(payloads.size());
         for (const auto& pl : payloads) {
             std::vector<uint8_t> mid;
-            if (!StoreMessage(sessionId, pl, mid)) {
+            if (!StoreMessage(sessionId, senderUserId, pl, mid)) {
                 const std::string batchFailReason = LastError();
                 for (auto rit = outMessageIds.rbegin(); rit != outMessageIds.rend(); ++rit) {
                     (void)DeleteMessageImplUnlocked(*rit);
@@ -2300,6 +2718,10 @@ namespace ZChatIM::mm2 {
             SetLastError("MM2 not initialized");
             return false;
         }
+        if (!m_metadataDb.DeleteGroupMute(groupId, userId)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
         if (!m_metadataDb.DeleteGroupMember(groupId, userId)) {
             SetLastError(m_metadataDb.LastError());
             return false;
@@ -2554,6 +2976,407 @@ namespace ZChatIM::mm2 {
         return true;
     }
 
+    bool MM2::Mm1RegisterDeviceSession(
+        const std::vector<uint8_t>& userId,
+        const std::vector<uint8_t>& deviceId,
+        const std::vector<uint8_t>& sessionId,
+        uint64_t                    loginTimeMs,
+        uint64_t                    lastActiveMs,
+        std::vector<uint8_t>&       outKickedSessionId)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        outKickedSessionId.clear();
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (userId.size() != ZChatIM::USER_ID_SIZE || deviceId.size() != ZChatIM::USER_ID_SIZE
+            || sessionId.size() != ZChatIM::USER_ID_SIZE) {
+            SetLastError("Mm1RegisterDeviceSession: invalid id length");
+            return false;
+        }
+        if (!m_metadataDb.DeleteMm1DeviceSessionsWhereSessionId(sessionId)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        for (;;) {
+            std::vector<std::vector<uint8_t>> sids;
+            std::vector<std::vector<uint8_t>> dids;
+            std::vector<uint64_t>             logins;
+            std::vector<uint64_t>             lasts;
+            if (!m_metadataDb.ListMm1DeviceSessionsForUser(userId, sids, dids, logins, lasts)) {
+                SetLastError(m_metadataDb.LastError());
+                return false;
+            }
+            if (sids.size() < 2) {
+                break;
+            }
+            size_t kickIdx = 0;
+            for (size_t i = 1; i < logins.size(); ++i) {
+                if (logins[i] < logins[kickIdx]) {
+                    kickIdx = i;
+                }
+            }
+            outKickedSessionId = sids[kickIdx];
+            if (!m_metadataDb.DeleteMm1DeviceSessionByUserAndSession(userId, sids[kickIdx])) {
+                SetLastError(m_metadataDb.LastError());
+                return false;
+            }
+        }
+        if (!m_metadataDb.InsertMm1DeviceSession(userId, sessionId, deviceId, loginTimeMs, lastActiveMs)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1UpdateDeviceSessionLastActive(
+        const std::vector<uint8_t>& userId,
+        const std::vector<uint8_t>& sessionId,
+        uint64_t                    lastActiveMs)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.UpdateMm1DeviceSessionLastActive(userId, sessionId, lastActiveMs)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1ListDeviceSessions(
+        const std::vector<uint8_t>& userId,
+        std::vector<std::vector<uint8_t>>& outSessionIds,
+        std::vector<std::vector<uint8_t>>& outDeviceIds,
+        std::vector<uint64_t>&             outLoginTimeMs,
+        std::vector<uint64_t>&             outLastActiveMs)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        outSessionIds.clear();
+        outDeviceIds.clear();
+        outLoginTimeMs.clear();
+        outLastActiveMs.clear();
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.ListMm1DeviceSessionsForUser(userId, outSessionIds, outDeviceIds, outLoginTimeMs, outLastActiveMs)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1CleanupExpiredDeviceSessions(uint64_t nowMs, uint64_t idleTimeoutMs)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.DeleteMm1DeviceSessionsIdleOlderThan(nowMs, idleTimeoutMs)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1ClearAllDeviceSessions()
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            return true;
+        }
+        if (!m_metadataDb.DeleteAllMm1DeviceSessions()) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1TouchImSessionActivity(const std::vector<uint8_t>& imSessionId, uint64_t lastActiveMs)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.UpsertMm1ImSessionActivity(imSessionId, lastActiveMs)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1SelectImSessionLastActive(
+        const std::vector<uint8_t>& imSessionId,
+        uint64_t&                   outLastActiveMs,
+        bool&                       outFound)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.SelectMm1ImSessionLastActive(imSessionId, outLastActiveMs, outFound)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1CleanupExpiredImSessionActivity(uint64_t nowMs, uint64_t idleTimeoutMs)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.DeleteMm1ImSessionActivityIdleOlderThan(nowMs, idleTimeoutMs)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1ClearAllImSessionActivity()
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            return true;
+        }
+        if (!m_metadataDb.DeleteAllMm1ImSessionActivity()) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1CertPinningConfigure(
+        const std::vector<uint8_t>& currentSpkiSha256,
+        const std::vector<uint8_t>& standbySpkiSha256)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.SetMm1CertPinConfig(currentSpkiSha256, standbySpkiSha256)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1CertPinningVerify(const std::vector<uint8_t>& presentedSpkiSha256)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (presentedSpkiSha256.size() != ZChatIM::SHA256_SIZE) {
+            return false;
+        }
+        std::vector<uint8_t> cur;
+        std::vector<uint8_t> st;
+        if (!m_metadataDb.GetMm1CertPinConfig(cur, st)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        const bool okCur =
+            cur.size() == ZChatIM::SHA256_SIZE
+            && common::Memory::ConstantTimeCompare(cur.data(), presentedSpkiSha256.data(), ZChatIM::SHA256_SIZE);
+        const bool okSt =
+            st.size() == ZChatIM::SHA256_SIZE
+            && common::Memory::ConstantTimeCompare(st.data(), presentedSpkiSha256.data(), ZChatIM::SHA256_SIZE);
+        return okCur || okSt;
+    }
+
+    bool MM2::Mm1CertPinningIsBanned(const std::vector<uint8_t>& clientId)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        uint32_t fc = 0;
+        bool     banned = false;
+        bool     found  = false;
+        if (!m_metadataDb.GetMm1CertPinClient(clientId, fc, banned, found)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return found && banned;
+    }
+
+    bool MM2::Mm1CertPinningRecordFailure(const std::vector<uint8_t>& clientId)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        uint32_t fc    = 0;
+        bool     banned = false;
+        bool     found  = false;
+        if (!m_metadataDb.GetMm1CertPinClient(clientId, fc, banned, found)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        if (!found) {
+            fc = 0;
+        }
+        ++fc;
+        if (fc >= 3U) {
+            banned = true;
+        }
+        if (!m_metadataDb.UpsertMm1CertPinClient(clientId, fc, banned)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1CertPinningClearBan(const std::vector<uint8_t>& clientId)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.DeleteMm1CertPinClient(clientId)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1CertPinningResetAll()
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            return true;
+        }
+        if (!m_metadataDb.DeleteAllMm1CertPinData()) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1UpsertUserStatus(const std::vector<uint8_t>& userId, bool online, uint64_t updatedMs)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.UpsertMm1UserStatus(userId, online, updatedMs)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1GetUserStatus(const std::vector<uint8_t>& userId, bool& outOnline, bool& outFound)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.GetMm1UserStatus(userId, outOnline, outFound)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1ClearAllUserStatus()
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            return true;
+        }
+        if (!m_metadataDb.DeleteAllMm1UserStatus()) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1MentionAtAllLoadTimes(
+        const std::vector<uint8_t>& groupId,
+        const std::vector<uint8_t>& senderId,
+        std::vector<uint64_t>& outTimesMs)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.SelectMm1MentionAtAllTimes(groupId, senderId, outTimesMs)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1MentionAtAllStoreTimes(
+        const std::vector<uint8_t>& groupId,
+        const std::vector<uint8_t>& senderId,
+        const std::vector<uint64_t>& timesMs)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.UpsertMm1MentionAtAllTimes(groupId, senderId, timesMs)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::Mm1ClearAllMentionAtAllWindows()
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        m_lastError.clear();
+        if (!m_initialized) {
+            return true;
+        }
+        if (!m_metadataDb.DeleteAllMm1MentionAtAllWindows()) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
     bool MM2::GetSessionMessages(
         const std::vector<uint8_t>& sessionId,
         size_t                      limit,
@@ -2578,8 +3401,7 @@ namespace ZChatIM::mm2 {
         }
 
         std::vector<std::vector<uint8_t>> ids;
-        if (!m_metadataDb.ListImMessageIdsForSession(sessionId, limit, ids)) {
-            SetLastError(m_metadataDb.LastError());
+        if (!ImRamListIdsLastNUnlocked(sessionId, limit, ids)) {
             return false;
         }
         outMessages.reserve(ids.size());
@@ -2606,16 +3428,8 @@ namespace ZChatIM::mm2 {
             SetLastError("CleanupSessionMessages: sessionId must be USER_ID_SIZE (16) bytes");
             return false;
         }
-        std::vector<std::vector<uint8_t>> ids;
-        if (!m_metadataDb.ListAllImMessageIdsForSession(sessionId, ids)) {
-            SetLastError(m_metadataDb.LastError());
-            return false;
-        }
-        for (const auto& mid : ids) {
-            if (!DeleteMessageImplUnlocked(mid)) {
-                return false;
-            }
-        }
+        ImRamClearSessionUnlocked(sessionId);
+        m_lastError.clear();
         return true;
     }
 

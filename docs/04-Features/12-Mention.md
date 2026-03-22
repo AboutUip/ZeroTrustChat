@@ -3,7 +3,7 @@
 > **文档类型**：**ZSP 载荷 TLV** + **MM1 权限校验**。  
 > **编号注意**：**TLV Type `0x15`（Mention）** 与 ZSP **消息类型**表中的 **`0x15` = GROUP_REMOVE** 是**不同命名空间**（见 **`02-ZSP-Protocol.md` 第7.2节 文首说明**）。本文 **0x15** 均指 **TLV 扩展**。  
 > **JNI**：**`ValidateMentionRequest`**、**`RecordMentionAtAllUsage`**（**`01-JNI.md`** 第六节）。  
-> **实现状态**：**`05-ZChatIM-Implementation-Status.md` 第3节** — **`MentionPermissionManager`** 为桩；**JNI** **`validateMentionRequest` / `recordMentionAtAllUsage`** 已接 **`JniBridge`**。**禁止**在其它路径绕过签名校验直调 MM2。
+> **实现状态**：**`05-ZChatIM-Implementation-Status.md` 第3节** — **`MentionPermissionManager`**：**Ed25519** + **`group_members`（SQL）** 成员/角色；**@ALL** 限速在 **`mm1_mention_atall_window`**（**`user_version=11`**，重启可恢复）。**JNI** **`validateMentionRequest` / `recordMentionAtAllUsage`** 已接 **`JniBridge`**。**禁止**在其它路径绕过签名校验直调 MM2。
 
 ---
 
@@ -96,7 +96,7 @@ TEXT + TLV 0x15:
 
 ## 七、与 MM2
 
-**`@提及` 元数据**默认 **不落 `im_messages`**（该表仅 `message_id`/`session_id`）；持久化策略（是否单独表）由 **MM1/SQLite 扩展** 决定，**非**当前 **`03-Storage.md`** 第二节 所列核心表。
+**`@提及` 元数据**默认 **不落当前元数据库核心表**（IM **无** SQLite `im_messages`）；持久化策略（是否单独表）由 **MM1/SQLite 扩展** 决定，**非**当前 **`03-Storage.md`** 所列 **`friend_requests` / `mm2_group_mute` 等**之外的热路径。
 
 ---
 

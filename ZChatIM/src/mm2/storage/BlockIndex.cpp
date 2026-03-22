@@ -1,4 +1,5 @@
-// BlockIndex 桩实现：供 MM2 等编译链接；后续可接独立索引库或合并到 SqliteMetadataDb。
+// BlockIndex 桩实现：**MM2 热路径不经过此类**（`data_blocks` / `zdb_files` 在 **SqliteMetadataDb**）。
+// 保留本编译单元供历史 API / 未来独立索引实验；**`MM2` 类不再嵌入 `BlockIndex` 成员**。
 
 #include "mm2/storage/BlockIndex.h"
 

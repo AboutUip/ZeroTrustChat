@@ -1,7 +1,12 @@
 #pragma once
 
+// cSpell:words Upsert upsert
+// (SQL/SQLite insert-or-replace terminology; appears in method names.)
+
 // SQLite metadata index (docs/02-Core/03-Storage.md): zdb_files, data_blocks, user_data, group_data, group_members,
-// im_messages, im_message_reply, friend_requests, mm2_group_display, mm2_file_transfer, **mm2_group_mute**（**`user_version=6`**）.
+// friend_requests, mm2_group_display, mm2_file_transfer, **mm2_group_mute**、**mm1_device_sessions** / **mm1_im_session_activity** /
+// **mm1_cert_pin_*** / **mm1_user_status** / **mm1_mention_atall_window**（**元库 `user_version=11`**；**无** IM 表）。
+// **IM** 仅 **MM2 RAM**；本库**不**含 **`im_messages` / `im_message_reply`**（项目未上线、不做旧库迁移）。
 // **`ZCHATIM_USE_SQLCIPHER=1`**（默认，见 CMake）：**SQLCipher** 页级加密 + 固定 PRAGMA；密钥为 **`mm2_message_key.bin` 主密钥**经域分离 **SHA-256** 派生的 **32 字节 raw key**（见 **`DeriveMetadataSqlcipherKeyFromMessageMaster`**）。关闭宏时回退 **vanilla `sqlite3.c`**。
 //
 // Thread-safety: connection opened with **SQLITE_OPEN_FULLMUTEX** (SQLite serialized / thread-safe API use).
@@ -56,7 +61,7 @@ namespace ZChatIM::mm2 {
         void Close();
         bool IsOpen() const;
 
-        // CREATE TABLE IF NOT EXISTS + PRAGMA foreign_keys=ON、迁移、`user_version`（当前 **6**：见 **`03-Storage.md`**）。
+        // CREATE TABLE IF NOT EXISTS + PRAGMA foreign_keys=ON、**`user_version=11`**（**无** **`im_messages` / `im_message_reply`**）。
         bool InitializeSchema();
 
         std::string LastError() const;
@@ -160,69 +165,65 @@ namespace ZChatIM::mm2 {
             const std::vector<uint8_t>& groupId,
             std::vector<std::vector<uint8_t>>& outUserIds);
 
-        // --- im_messages (MM2 encrypted message index; session_id / message_id = USER_ID_SIZE / MESSAGE_ID_SIZE BLOBs) ---
-        // **`read_at_ms`**：SQLite INTEGER，**NULL**=未读；非 NULL=已读（Unix 毫秒）。schema **v3**。
-        bool InsertImMessage(const std::vector<uint8_t>& sessionId, const std::vector<uint8_t>& messageId);
-        // 将 **`read_at_ms`** 从 NULL 设为 **`readAtMs`**（**首次已读**）；已读则 **true** 且不覆盖时间戳。
-        bool MarkImMessageRead(const std::vector<uint8_t>& messageId, int64_t readAtMs);
-        // 会话内 **`read_at_ms IS NULL`** 的 `message_id`，按 **`rowid ASC`**（最早未读在前），最多 **`limit`** 条。
-        bool ListUnreadImMessageIdsForSession(
+        // **`group_id`** 在 **`group_members`** 中是否存在**至少一行**（用于将 **16B imSessionId** 视为群会话通道）。
+        bool GroupIdHasAnyMemberRow(const std::vector<uint8_t>& groupId, bool& outHasAny);
+
+        // --- mm1_device_sessions（**MM1 `DeviceSessionManager`**；PK user_id + session_id；**session_id** 16B）---
+        bool DeleteMm1DeviceSessionsWhereSessionId(const std::vector<uint8_t>& sessionId);
+        bool DeleteMm1DeviceSessionByUserAndSession(
+            const std::vector<uint8_t>& userId,
+            const std::vector<uint8_t>& sessionId);
+        bool ListMm1DeviceSessionsForUser(
+            const std::vector<uint8_t>& userId,
+            std::vector<std::vector<uint8_t>>& outSessionIds,
+            std::vector<std::vector<uint8_t>>& outDeviceIds,
+            std::vector<uint64_t>&             outLoginTimeMs,
+            std::vector<uint64_t>&             outLastActiveMs);
+        bool InsertMm1DeviceSession(
+            const std::vector<uint8_t>& userId,
             const std::vector<uint8_t>& sessionId,
-            size_t                      limit,
-            std::vector<std::vector<uint8_t>>& outMessageIds);
-        // 列出某会话下的 message_id：按 **`rowid`** 取 **最近** `limit` 条，再转为 **插入先后正序**（先插入在前；**非**墙钟时间）。
-        // `limit==0` 时成功并清空 `outMessageIds`。
-        bool ListImMessageIdsForSession(
+            const std::vector<uint8_t>& deviceId,
+            uint64_t                    loginTimeMs,
+            uint64_t                    lastActiveMs);
+        bool UpdateMm1DeviceSessionLastActive(
+            const std::vector<uint8_t>& userId,
             const std::vector<uint8_t>& sessionId,
-            size_t                      limit,
-            std::vector<std::vector<uint8_t>>& outMessageIds);
-        // 按 `rowid` **升序**取前 `limit` 条 `message_id`（会话内最早 → 更晚）。
-        bool ListImMessageIdsForSessionChronological(
-            const std::vector<uint8_t>& sessionId,
-            size_t                      limit,
-            std::vector<std::vector<uint8_t>>& outMessageIds);
-        // 取 `rowid` **大于** `afterMessageId` 对应行的最多 `limit` 条（升序）。`afterMessageId` 须为 **`MESSAGE_ID_SIZE`**；若该 id 不在该 `sessionId` 下则结果为空。
-        bool ListImMessageIdsForSessionAfterMessageId(
-            const std::vector<uint8_t>& sessionId,
-            const std::vector<uint8_t>& afterMessageId,
-            size_t                      limit,
-            std::vector<std::vector<uint8_t>>& outMessageIds);
-        bool GetImMessageSession(const std::vector<uint8_t>& messageId, std::vector<uint8_t>& sessionIdOut);
-        bool ImMessageExists(const std::vector<uint8_t>& messageId);
-        bool DeleteImMessage(const std::vector<uint8_t>& messageId);
+            uint64_t                    lastActiveMs);
+        bool DeleteMm1DeviceSessionsIdleOlderThan(uint64_t nowMs, uint64_t idleTimeoutMs);
+        bool DeleteAllMm1DeviceSessions();
+
+        // --- mm1_im_session_activity（**MM1 `SessionActivityManager`**；PK im_session_id 16B）---
+        bool UpsertMm1ImSessionActivity(const std::vector<uint8_t>& imSessionId, uint64_t lastActiveMs);
+        bool SelectMm1ImSessionLastActive(const std::vector<uint8_t>& imSessionId, uint64_t& outLastActiveMs, bool& outFound);
+        bool DeleteMm1ImSessionActivityIdleOlderThan(uint64_t nowMs, uint64_t idleTimeoutMs);
+        bool DeleteAllMm1ImSessionActivity();
+
+        // --- mm1_cert_pin_config（单行 id=1）、mm1_cert_pin_client（**`CertPinningManager`**）---
+        bool GetMm1CertPinConfig(std::vector<uint8_t>& outCurrentSpki, std::vector<uint8_t>& outStandbySpki);
+        bool SetMm1CertPinConfig(const std::vector<uint8_t>& currentSpkiSha256, const std::vector<uint8_t>& standbySpkiSha256);
+        bool GetMm1CertPinClient(const std::vector<uint8_t>& clientId, uint32_t& outFailCount, bool& outBanned, bool& outFound);
+        bool UpsertMm1CertPinClient(const std::vector<uint8_t>& clientId, uint32_t failCount, bool banned);
+        bool DeleteMm1CertPinClient(const std::vector<uint8_t>& clientId);
+        bool DeleteAllMm1CertPinData();
+
+        // --- mm1_user_status（**MM1 `UserStatusManager`**；**最后已知**在线，**非**服务端真相源）---
+        bool UpsertMm1UserStatus(const std::vector<uint8_t>& userId, bool online, uint64_t updatedMs);
+        // 无行时 **`outFound=false`**、`outOnline` 未用；仅 SQL/参数失败时 **false**。
+        bool GetMm1UserStatus(const std::vector<uint8_t>& userId, bool& outOnline, bool& outFound);
+        bool DeleteAllMm1UserStatus();
+
+        // --- mm1_mention_atall_window（**@ALL** 限速；**times_blob** = 至多 3×uint64 **小端** 毫秒时间戳）---
+        bool SelectMm1MentionAtAllTimes(
+            const std::vector<uint8_t>& groupId,
+            const std::vector<uint8_t>& senderId,
+            std::vector<uint64_t>& outTimesMs);
+        bool UpsertMm1MentionAtAllTimes(
+            const std::vector<uint8_t>& groupId,
+            const std::vector<uint8_t>& senderId,
+            const std::vector<uint64_t>& timesMs);
+        bool DeleteAllMm1MentionAtAllWindows();
 
         bool DeleteDataBlock(const std::vector<uint8_t>& dataId, int32_t chunkIdx);
-
-        // MM2 `DeleteMessage`：在 **`.zdb` 已清零之后**调用，**`BEGIN IMMEDIATE`** 内原子删除
-        // **`data_blocks`（可选 chunk 0）+ `im_messages`**，避免仅删一行导致的索引半状态。
-        bool DeleteMessageMetadataTransaction(const std::vector<uint8_t>& messageId, bool deleteDataBlockChunk0);
-
-        // --- im_message_reply（回复关系；**`message_id`** 为「本条回复消息」）---
-        bool UpsertImMessageReply(
-            const std::vector<uint8_t>& messageId,
-            const std::vector<uint8_t>& repliedMsgId,
-            const std::vector<uint8_t>& repliedSenderId,
-            const std::vector<uint8_t>& repliedDigest);
-        bool GetImMessageReply(
-            const std::vector<uint8_t>& messageId,
-            std::vector<uint8_t>& outRepliedMsgId,
-            std::vector<uint8_t>& outRepliedSenderId,
-            std::vector<uint8_t>& outRepliedDigest);
-
-        // --- im_messages 编辑列（**v4**）---
-        bool UpdateImMessageEditState(
-            const std::vector<uint8_t>& messageId,
-            uint32_t                    editCount,
-            uint64_t                    lastEditTimeSeconds);
-        bool GetImMessageEditState(
-            const std::vector<uint8_t>& messageId,
-            uint32_t& outEditCount,
-            uint64_t& outLastEditTimeSeconds);
-
-        size_t CountImMessages();
-        bool ListAllImMessageIdsForSession(
-            const std::vector<uint8_t>& sessionId,
-            std::vector<std::vector<uint8_t>>& outMessageIds);
 
         // --- friend_requests（MM2 本地记录；签名为 BLOB）---
         bool InsertFriendRequest(

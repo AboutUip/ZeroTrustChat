@@ -3,7 +3,7 @@
 > **协议修正（重要）**：群名称修改的 ZSP **消息类型**为 **`0x1C` `GROUP_NAME_UPDATE`**（**`02-ZSP-Protocol.md` 第五节**），**不是** **`0x10`**（**0x10** 为 **`GROUP_UPDATE`** 其它群资料更新）。  
 > **可选 TLV**：载荷内可使用 **TLV Type `0x20` `GroupName`**（**`02-ZSP-Protocol.md` 第7.2节**）携带 **`groupId` / UTF-8 群名** 等；具体打包顺序以 **协议实现** 为准。  
 > **JNI**：**`updateGroupName`** → MM1 **`GroupNameManager`** 校验后 → **`MM2::UpdateGroupName`**（**`01-JNI.md`** 路由摘要）。  
-> **MM2**：**`UpdateGroupName` / `GetGroupName`** 已落 SQLite 表 **`mm2_group_display`**（与 **`group_data` 大块**独立，见 **`03-Storage.md` §2.5（**`mm2_group_display.name`**）与 §2.6 段内 **v4** 表列举**、**`05-ZChatIM-Implementation-Status.md` §2.1 / §3**）。**JNI**：**`updateGroupName` / `getGroupName`** 已接 **`JniBridge`**；**`updateGroupName`** → **`mm1::GroupNameManager`**（**群主/管理员**、**非空 UTF-8 ≤2048 字节**；**`nowMs/1000`→`updated_s`**）→ **`MM2::UpdateGroupName`**；**`getGroupName`** → **`MM2::GetGroupName`**（**仅 caller**，见 **`01-JNI.md` 绑定矩阵**）。
+> **MM2**：**`UpdateGroupName` / `GetGroupName`** 已落 SQLite 表 **`mm2_group_display`**（与 **`group_data` 大块**独立，见 **`03-Storage.md` 第2.5节（**`mm2_group_display.name`**）与 第2.6节 段内 **v4** 表列举**、**`05-ZChatIM-Implementation-Status.md` 第2.1节 / 第3节**）。**JNI**：**`updateGroupName` / `getGroupName`** 已接 **`JniBridge`**；**`updateGroupName`** → **`mm1::GroupNameManager`**（**群主/管理员**、**非空 UTF-8 ≤2048 字节**；**`nowMs/1000`→`updated_s`**）→ **`MM2::UpdateGroupName`**；**`getGroupName`** → **`MM2::GetGroupName`**（**仅 caller**，见 **`01-JNI.md` 绑定矩阵**）。
 
 ---
 
@@ -65,7 +65,7 @@ Value:
 | 位置 | 元数据 SQLite 表 **`mm2_group_display`**（**非** `.zdb` 消息块；与 **`group_data`→ZGK1** 独立） |
 | 字段 | **`group_id`**（16B）、**`name`**（UTF-8）、**`updated_s`**（Unix **秒**）、**`updated_by`**（16B） |
 
-**与 `group_data`**：**`03-Storage.md` §2.4** 的 **`group_data`** 仅索引群密钥等大块；**群显示名**不写入该表。
+**与 `group_data`**：**`03-Storage.md` 第2.4节** 的 **`group_data`** 仅索引群密钥等大块；**群显示名**不写入该表。
 
 ---
 

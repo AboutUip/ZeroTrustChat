@@ -66,6 +66,16 @@ namespace ZChatIM
                 const uint8_t* salt, size_t saltLen,
                 uint8_t* outputKey, size_t outputKeyLen
             );
+
+            // PBKDF2-HMAC-SHA256（**`iterations`** 由调用方指定；**`mm2_message_key` ZMKP** 使用 **200000**，见 **`MM2_message_key_passphrase.cpp`**）。
+            static bool DeriveKeyPbkdf2HmacSha256(
+                const uint8_t* password,
+                size_t         passwordLen,
+                const uint8_t* salt,
+                size_t         saltLen,
+                int            iterations,
+                uint8_t*       outputKey,
+                size_t         outputKeyLen);
             
             // =============================================================
             // 哈希函数

@@ -2,6 +2,7 @@
 
 #include "common/Memory.h"
 #include "mm1/MM1.h"
+#include "mm1/managers/RtcCallSessionManager.h"
 #include "mm2/MM2.h"
 #include "Types.h"
 
@@ -97,8 +98,7 @@ namespace ZChatIM::jni {
     }
 
     JniBridge::JniBridge()
-        : m_initialized(false)
-        , m_mm1(mm1::MM1::Instance())
+        : m_mm1(mm1::MM1::Instance())
         , m_mm2(mm2::MM2::Instance())
     {
     }
@@ -107,7 +107,7 @@ namespace ZChatIM::jni {
 
     bool JniBridge::CheckInitialized()
     {
-        return m_initialized;
+        return m_initialized.load(std::memory_order_acquire);
     }
 
     void JniBridge::LogOperation(const std::string& /*operation*/, bool /*success*/)
@@ -116,21 +116,29 @@ namespace ZChatIM::jni {
 
     bool JniBridge::Initialize(const std::string& dataDir, const std::string& indexDir)
     {
+        return Initialize(dataDir, indexDir, nullptr);
+    }
+
+    bool JniBridge::Initialize(
+        const std::string& dataDir,
+        const std::string& indexDir,
+        const char*        messageKeyPassphraseUtf8)
+    {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
         if (dataDir.empty() || indexDir.empty()) {
             return false;
         }
-        if (m_initialized) {
+        if (m_initialized.load(std::memory_order_relaxed)) {
             return true;
         }
         if (!m_mm1.Initialize()) {
             return false;
         }
-        if (!m_mm2.Initialize(dataDir, indexDir)) {
+        if (!m_mm2.Initialize(dataDir, indexDir, messageKeyPassphraseUtf8)) {
             m_mm1.Cleanup();
             return false;
         }
-        m_initialized = true;
+        m_initialized.store(true, std::memory_order_release);
         return true;
     }
 
@@ -139,7 +147,7 @@ namespace ZChatIM::jni {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
         m_mm2.Cleanup();
         m_mm1.Cleanup();
-        m_initialized = false;
+        m_initialized.store(false, std::memory_order_release);
     }
 
     std::vector<uint8_t> JniBridge::Auth(
@@ -148,7 +156,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& clientIp)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         return m_mm1.GetAuthSessionManager().Auth(userId, token, clientIp);
@@ -157,7 +165,7 @@ namespace ZChatIM::jni {
     bool JniBridge::VerifySession(const std::vector<uint8_t>& sessionId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         return m_mm1.GetAuthSessionManager().VerifySession(sessionId);
@@ -168,7 +176,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& sessionIdToDestroy)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> pCaller;
@@ -185,25 +193,205 @@ namespace ZChatIM::jni {
         return m_mm1.GetAuthSessionManager().DestroySession(sessionIdToDestroy);
     }
 
-    std::vector<uint8_t> JniBridge::StoreMessage(
-        const std::vector<uint8_t>& callerSessionId,
-        const std::vector<uint8_t>& imSessionId,
-        const std::vector<uint8_t>& payload)
+    bool JniBridge::RegisterLocalUser(
+        const std::vector<uint8_t>& userId,
+        const std::vector<uint8_t>& passwordUtf8,
+        const std::vector<uint8_t>& recoverySecretUtf8)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
+            return false;
+        }
+        return m_mm1.GetLocalAccountCredentialManager().RegisterLocalUser(userId, passwordUtf8, recoverySecretUtf8);
+    }
+
+    std::vector<uint8_t> JniBridge::AuthWithLocalPassword(
+        const std::vector<uint8_t>& userId,
+        const std::vector<uint8_t>& passwordUtf8,
+        const std::vector<uint8_t>& clientIp)
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        if (!m_initialized.load(std::memory_order_relaxed)) {
+            return {};
+        }
+        mm1::AuthSessionManager& auth = m_mm1.GetAuthSessionManager();
+        return m_mm1.GetLocalAccountCredentialManager().AuthWithLocalPassword(auth, userId, passwordUtf8, clientIp);
+    }
+
+    bool JniBridge::HasLocalPassword(const std::vector<uint8_t>& userId)
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        if (!m_initialized.load(std::memory_order_relaxed)) {
+            return false;
+        }
+        return m_mm1.GetLocalAccountCredentialManager().HasLocalPassword(userId);
+    }
+
+    bool JniBridge::ChangeLocalPassword(
+        const std::vector<uint8_t>& callerSessionId,
+        const std::vector<uint8_t>& userId,
+        const std::vector<uint8_t>& oldPasswordUtf8,
+        const std::vector<uint8_t>& newPasswordUtf8)
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        if (!m_initialized.load(std::memory_order_relaxed)) {
+            return false;
+        }
+        std::vector<uint8_t> principal;
+        if (!TryBindCaller(m_mm1, callerSessionId, principal)) {
+            return false;
+        }
+        if (!PrincipalMatches(principal, userId)) {
+            return false;
+        }
+        return m_mm1.GetLocalAccountCredentialManager().ChangeLocalPassword(userId, oldPasswordUtf8, newPasswordUtf8);
+    }
+
+    bool JniBridge::ResetLocalPasswordWithRecovery(
+        const std::vector<uint8_t>& userId,
+        const std::vector<uint8_t>& recoverySecretUtf8,
+        const std::vector<uint8_t>& newPasswordUtf8,
+        const std::vector<uint8_t>& clientIp)
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        if (!m_initialized.load(std::memory_order_relaxed)) {
+            return false;
+        }
+        mm1::AuthSessionManager& auth = m_mm1.GetAuthSessionManager();
+        return m_mm1.GetLocalAccountCredentialManager().ResetLocalPasswordWithRecovery(
+            auth, userId, recoverySecretUtf8, newPasswordUtf8, clientIp);
+    }
+
+    std::vector<uint8_t> JniBridge::RtcStartCall(
+        const std::vector<uint8_t>& callerSessionId,
+        const std::vector<uint8_t>& peerUserId,
+        int32_t                     callKind)
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
         if (!TryBindCaller(m_mm1, callerSessionId, principal)) {
             return {};
         }
-        (void)principal;
+        if (peerUserId.size() != USER_ID_SIZE) {
+            return {};
+        }
+        if (callKind != mm1::RTC_CALL_KIND_AUDIO && callKind != mm1::RTC_CALL_KIND_VIDEO) {
+            return {};
+        }
+        return m_mm1.GetRtcCallSessionManager().StartCall(principal, peerUserId, callKind);
+    }
+
+    bool JniBridge::RtcAcceptCall(
+        const std::vector<uint8_t>& callerSessionId,
+        const std::vector<uint8_t>& callId)
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        if (!m_initialized.load(std::memory_order_relaxed)) {
+            return false;
+        }
+        std::vector<uint8_t> principal;
+        if (!TryBindCaller(m_mm1, callerSessionId, principal)) {
+            return false;
+        }
+        if (callId.size() != MESSAGE_ID_SIZE) {
+            return false;
+        }
+        return m_mm1.GetRtcCallSessionManager().AcceptCall(principal, callId);
+    }
+
+    bool JniBridge::RtcRejectCall(
+        const std::vector<uint8_t>& callerSessionId,
+        const std::vector<uint8_t>& callId)
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        if (!m_initialized.load(std::memory_order_relaxed)) {
+            return false;
+        }
+        std::vector<uint8_t> principal;
+        if (!TryBindCaller(m_mm1, callerSessionId, principal)) {
+            return false;
+        }
+        if (callId.size() != MESSAGE_ID_SIZE) {
+            return false;
+        }
+        return m_mm1.GetRtcCallSessionManager().RejectCall(principal, callId);
+    }
+
+    bool JniBridge::RtcEndCall(
+        const std::vector<uint8_t>& callerSessionId,
+        const std::vector<uint8_t>& callId)
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        if (!m_initialized.load(std::memory_order_relaxed)) {
+            return false;
+        }
+        std::vector<uint8_t> principal;
+        if (!TryBindCaller(m_mm1, callerSessionId, principal)) {
+            return false;
+        }
+        if (callId.size() != MESSAGE_ID_SIZE) {
+            return false;
+        }
+        return m_mm1.GetRtcCallSessionManager().EndCall(principal, callId);
+    }
+
+    int32_t JniBridge::RtcGetCallState(
+        const std::vector<uint8_t>& callerSessionId,
+        const std::vector<uint8_t>& callId)
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        if (!m_initialized.load(std::memory_order_relaxed)) {
+            return mm1::RTC_CALL_STATE_INVALID;
+        }
+        std::vector<uint8_t> principal;
+        if (!TryBindCaller(m_mm1, callerSessionId, principal)) {
+            return mm1::RTC_CALL_STATE_INVALID;
+        }
+        if (callId.size() != MESSAGE_ID_SIZE) {
+            return mm1::RTC_CALL_STATE_INVALID;
+        }
+        return m_mm1.GetRtcCallSessionManager().GetCallState(principal, callId);
+    }
+
+    int32_t JniBridge::RtcGetCallKind(
+        const std::vector<uint8_t>& callerSessionId,
+        const std::vector<uint8_t>& callId)
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        if (!m_initialized.load(std::memory_order_relaxed)) {
+            return -1;
+        }
+        std::vector<uint8_t> principal;
+        if (!TryBindCaller(m_mm1, callerSessionId, principal)) {
+            return -1;
+        }
+        if (callId.size() != MESSAGE_ID_SIZE) {
+            return -1;
+        }
+        return m_mm1.GetRtcCallSessionManager().GetCallKind(principal, callId);
+    }
+
+    std::vector<uint8_t> JniBridge::StoreMessage(
+        const std::vector<uint8_t>& callerSessionId,
+        const std::vector<uint8_t>& imSessionId,
+        const std::vector<uint8_t>& payload)
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        if (!m_initialized.load(std::memory_order_relaxed)) {
+            return {};
+        }
+        std::vector<uint8_t> principal;
+        if (!TryBindCaller(m_mm1, callerSessionId, principal)) {
+            return {};
+        }
         if (imSessionId.size() != USER_ID_SIZE) {
             return {};
         }
         std::vector<uint8_t> mid;
-        if (!m_mm2.StoreMessage(imSessionId, payload, mid)) {
+        if (!m_mm2.StoreMessage(imSessionId, principal, payload, mid)) {
             return {};
         }
         return mid;
@@ -214,7 +402,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& messageId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -236,7 +424,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& signatureEd25519)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -256,7 +444,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& signatureEd25519)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -275,7 +463,7 @@ namespace ZChatIM::jni {
         int                         count)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -295,7 +483,7 @@ namespace ZChatIM::jni {
         int                         count)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -315,7 +503,7 @@ namespace ZChatIM::jni {
         int                         count)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -334,7 +522,7 @@ namespace ZChatIM::jni {
         uint64_t                    readTimestampMs)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -351,7 +539,7 @@ namespace ZChatIM::jni {
         int                         limit)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -385,7 +573,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& signatureEd25519)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         return m_mm1.GetMessageReplyManager().StoreMessageReplyRelation(
@@ -404,7 +592,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& messageId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -434,7 +622,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& senderId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -457,7 +645,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& messageId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -493,7 +681,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& data)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -512,7 +700,7 @@ namespace ZChatIM::jni {
         int32_t                     type)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -531,7 +719,7 @@ namespace ZChatIM::jni {
         int32_t                     type)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -552,7 +740,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& signatureEd25519)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -574,7 +762,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& signatureEd25519)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -600,7 +788,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& signatureEd25519)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -618,7 +806,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& userId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -637,7 +825,7 @@ namespace ZChatIM::jni {
         const std::string&          name)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -656,7 +844,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& userId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -672,7 +860,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& userId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -688,7 +876,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& userId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -706,7 +894,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& groupId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -721,7 +909,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& groupId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -741,7 +929,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>&                     signatureEd25519)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -767,7 +955,7 @@ namespace ZChatIM::jni {
         uint64_t                    nowMs)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -790,7 +978,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& reason)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -816,7 +1004,7 @@ namespace ZChatIM::jni {
         uint64_t                    nowMs)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -835,7 +1023,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& unmutedBy)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -856,7 +1044,7 @@ namespace ZChatIM::jni {
         uint64_t                    nowMs)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -874,7 +1062,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& groupId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -896,7 +1084,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& data)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -916,7 +1104,7 @@ namespace ZChatIM::jni {
         int                         chunkIndex)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -940,7 +1128,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& sha256)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -959,7 +1147,7 @@ namespace ZChatIM::jni {
         const std::string&          fileId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -976,7 +1164,7 @@ namespace ZChatIM::jni {
         uint32_t                    chunkIndex)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -992,7 +1180,7 @@ namespace ZChatIM::jni {
         const std::string&          fileId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return UINT32_MAX;
         }
         std::vector<uint8_t> principal;
@@ -1012,7 +1200,7 @@ namespace ZChatIM::jni {
         const std::string&          fileId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -1029,7 +1217,7 @@ namespace ZChatIM::jni {
         int                         limit)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -1052,7 +1240,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& imSessionId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -1072,7 +1260,7 @@ namespace ZChatIM::jni {
         uint64_t                    nowMs)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return;
         }
         std::vector<uint8_t> principal;
@@ -1091,7 +1279,7 @@ namespace ZChatIM::jni {
         uint64_t                    nowMs)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return;
         }
         std::vector<uint8_t> principal;
@@ -1113,7 +1301,7 @@ namespace ZChatIM::jni {
     {
         outKickedSessionId.clear();
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -1139,7 +1327,7 @@ namespace ZChatIM::jni {
         uint64_t                    nowMs)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -1157,7 +1345,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& userId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -1181,7 +1369,7 @@ namespace ZChatIM::jni {
         uint64_t                    nowMs)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return;
         }
         std::vector<uint8_t> principal;
@@ -1197,7 +1385,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& userId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -1215,7 +1403,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& imSessionId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -1232,7 +1420,7 @@ namespace ZChatIM::jni {
     bool JniBridge::CleanupExpiredData(const std::vector<uint8_t>& callerSessionId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -1246,7 +1434,7 @@ namespace ZChatIM::jni {
     bool JniBridge::OptimizeStorage(const std::vector<uint8_t>& callerSessionId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -1260,7 +1448,7 @@ namespace ZChatIM::jni {
     std::map<std::string, std::string> JniBridge::GetStorageStatus(const std::vector<uint8_t>& callerSessionId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -1282,7 +1470,7 @@ namespace ZChatIM::jni {
     int64_t JniBridge::GetMessageCount(const std::vector<uint8_t>& callerSessionId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return -1;
         }
         std::vector<uint8_t> principal;
@@ -1296,7 +1484,7 @@ namespace ZChatIM::jni {
     int64_t JniBridge::GetFileCount(const std::vector<uint8_t>& callerSessionId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return -1;
         }
         std::vector<uint8_t> principal;
@@ -1310,7 +1498,7 @@ namespace ZChatIM::jni {
     std::vector<uint8_t> JniBridge::GenerateMasterKey(const std::vector<uint8_t>& callerSessionId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -1324,7 +1512,7 @@ namespace ZChatIM::jni {
     std::vector<uint8_t> JniBridge::RefreshSessionKey(const std::vector<uint8_t>& callerSessionId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -1332,13 +1520,13 @@ namespace ZChatIM::jni {
             return {};
         }
         (void)principal;
-        return m_mm1.GetKeyManagement().RefreshSessionKey();
+        return m_mm1.RefreshSessionKey();
     }
 
     void JniBridge::EmergencyWipe(const std::vector<uint8_t>& callerSessionId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return;
         }
         std::vector<uint8_t> principal;
@@ -1346,13 +1534,15 @@ namespace ZChatIM::jni {
             return;
         }
         (void)principal;
-        m_mm1.GetSystemControl().EmergencyWipe();
+        // 高危：与 MM1::EmergencyTrustedZoneWipe / SystemControl::EmergencyWipe 同源（含 MM2 清库、认证/多设备/在线/Pin/IM 活跃/@ALL 限速、主密钥）。
+        m_mm1.EmergencyTrustedZoneWipe();
+        m_initialized.store(false, std::memory_order_release);
     }
 
     std::map<std::string, std::string> JniBridge::GetStatus(const std::vector<uint8_t>& callerSessionId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return {};
         }
         std::vector<uint8_t> principal;
@@ -1360,13 +1550,17 @@ namespace ZChatIM::jni {
             return {};
         }
         (void)principal;
-        return m_mm1.GetSystemControl().GetStatus();
+        std::map<std::string, std::string> out;
+        out["jni_bridge_initialized"] = "1";
+        out["mm2_initialized"]        = m_mm2.IsInitialized() ? "1" : "0";
+        out["mm1_master_key_present"] = m_mm1.HasMasterKey() ? "1" : "0";
+        return out;
     }
 
     bool JniBridge::RotateKeys(const std::vector<uint8_t>& callerSessionId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -1374,7 +1568,8 @@ namespace ZChatIM::jni {
             return false;
         }
         (void)principal;
-        return m_mm1.GetSystemControl().RotateKeys();
+        const std::vector<uint8_t> k = m_mm1.RefreshMasterKey();
+        return !k.empty();
     }
 
     void JniBridge::ConfigurePinnedPublicKeyHashes(
@@ -1383,7 +1578,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& standbySpkiSha256)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return;
         }
         std::vector<uint8_t> principal;
@@ -1400,7 +1595,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& presentedSpkiSha256)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         if (!callerSessionId.empty()) {
@@ -1418,7 +1613,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& clientId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -1434,7 +1629,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& clientId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return;
         }
         if (!callerSessionId.empty()) {
@@ -1452,7 +1647,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& clientId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return;
         }
         std::vector<uint8_t> principal;
@@ -1470,7 +1665,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& secondConfirmToken)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -1488,7 +1683,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& userId)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -1510,7 +1705,7 @@ namespace ZChatIM::jni {
         const std::vector<uint8_t>& signatureEd25519)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (!m_initialized) {
+        if (!m_initialized.load(std::memory_order_relaxed)) {
             return false;
         }
         std::vector<uint8_t> principal;
@@ -1531,7 +1726,8 @@ namespace ZChatIM::jni {
     bool JniBridge::ValidateJniCall()
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        return true;
+        // 退化路径：仅表示桥接已 **Initialize**；强校验请用 **`ValidateJniCall(env, jclass)`**。
+        return m_initialized.load(std::memory_order_relaxed);
     }
 
     bool JniBridge::ValidateJniCall(const void* jniEnv, const void* jclass)

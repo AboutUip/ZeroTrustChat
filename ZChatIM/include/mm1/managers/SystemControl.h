@@ -9,6 +9,8 @@ namespace ZChatIM {
     namespace mm1 {
         // =============================================================
         // 系统控制 / 安全运维管理器契约
+        // 实现见 MM1_manager_stubs.cpp：委托 MM1::EmergencyTrustedZoneWipe /
+        // SystemControlStatusSnapshot / RefreshMasterKey（与 JniSecurityPolicy.h 第8条 一致）。
         // =============================================================
         class SystemControl {
         public:
