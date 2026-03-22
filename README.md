@@ -1,6 +1,6 @@
 <div align="center">
 
-# ZerOS-Chat
+# ZeroTrust-Chat
 
 > **ZChatIM** — 面向内网 / 强隔离的即时通讯：敏感能力收敛于 **C++ 可信基（MM1 / MM2）**，Java 只做 **ZSP** 编解码与编排。
 
