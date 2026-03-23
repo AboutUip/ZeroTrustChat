@@ -15,6 +15,8 @@ public final class ZChatIMNative {
 
     public static native boolean initialize(String dataDir, String indexDir);
 
+    public static native boolean initializeWithPassphrase(String dataDir, String indexDir, String passphrase);
+
     public static native void cleanup();
 
     public static native byte[] auth(byte[] userId, byte[] token, byte[] clientIp);
@@ -22,6 +24,30 @@ public final class ZChatIMNative {
     public static native boolean verifySession(byte[] sessionId);
 
     public static native boolean destroySession(byte[] callerSessionId, byte[] sessionIdToDestroy);
+
+    public static native boolean registerLocalUser(byte[] userId, byte[] password, byte[] recoveryToken);
+
+    public static native byte[] authWithLocalPassword(byte[] userId, byte[] password, byte[] clientIp);
+
+    public static native boolean hasLocalPassword(byte[] userId);
+
+    public static native boolean changeLocalPassword(
+            byte[] userId, byte[] oldPassword, byte[] newPassword, byte[] newRecoveryToken);
+
+    public static native boolean resetLocalPasswordWithRecovery(
+            byte[] userId, byte[] recoveryToken, byte[] newPassword, byte[] newRecoveryToken);
+
+    public static native byte[] rtcStartCall(byte[] callerSessionId, byte[] peerUserId, int callKind);
+
+    public static native boolean rtcAcceptCall(byte[] callerSessionId, byte[] callId);
+
+    public static native boolean rtcRejectCall(byte[] callerSessionId, byte[] callId);
+
+    public static native boolean rtcEndCall(byte[] callerSessionId, byte[] callId);
+
+    public static native int rtcGetCallState(byte[] callerSessionId, byte[] callId);
+
+    public static native int rtcGetCallKind(byte[] callerSessionId, byte[] callId);
 
     public static native byte[] storeMessage(byte[] callerSessionId, byte[] imSessionId, byte[] payload);
 
