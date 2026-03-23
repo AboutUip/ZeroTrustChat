@@ -174,8 +174,8 @@ namespace ZChatIM::mm1 {
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
         std::vector<uint8_t> k = m_keyManagement.GenerateMasterKey();
-        if (!k.empty()) {
-            (void)m_keyManagement.StoreMasterKey(k);
+        if (k.empty() || !m_keyManagement.StoreMasterKey(k)) {
+            return {};
         }
         return k;
     }

@@ -1,3 +1,15 @@
 spring:
-  datasource:
-    url: jdbc:sqlite:data/test.db  # ???? test.db ??????
+  application:
+    name: zchat-server
+
+zchat:
+  zsp:
+    enabled: true
+    port: 8848
+    boss-threads: 1
+    worker-threads: 0
+    reader-idle-seconds: 90
+    jni-enabled: false
+    native:
+      data-dir: ${java.io.tmpdir}/zchat-mm-data
+      index-dir: ${java.io.tmpdir}/zchat-mm-index

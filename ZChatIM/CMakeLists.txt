@@ -31,7 +31,7 @@ else()
 endif()
 
 # Only when ZChatIM.exe is built: merge tests/*.cpp (--test).
-option(ZCHATIM_BUILD_TESTS "Compile in-tree tests into ZChatIM.exe" OFF)
+option(ZCHATIM_BUILD_TESTS "Compile in-tree tests into ZChatIM.exe" ON)
 
 # 密码学后端（**全平台 OpenSSL 3**）：
 # - **MM2 `Crypto.cpp`**：**EVP_aes_256_gcm** / **PKCS5_PBKDF2_HMAC** / **RAND_bytes**。

@@ -66,7 +66,7 @@ CMake 应出现 **`MM2 crypto backend: OpenSSL3`**、**`Metadata SQLite: SQLCiph
 
 | 产物 | 说明 |
 |------|------|
-| **`ZChatIMJNI`** | **`jni/ZChatIMJNI.cpp`**（**`JNI_OnLoad`**）、**`jni/JniNatives.cpp`** → **`com.yhj.zchat.jni.ZChatIMNative`** |
+| **`ZChatIMJNI`** | **`jni/ZChatIMJNI.cpp`**（**`JNI_OnLoad`**）、**`jni/JniNatives.cpp`** → **`com.ztrust.zchat.im.jni.ZChatIMNative`** |
 | Java | **`ZChatServer/.../ZChatIMNative.java`** |
 
 ## 7. 控制台 EXE 与树内测试

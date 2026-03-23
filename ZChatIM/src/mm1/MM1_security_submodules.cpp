@@ -21,6 +21,7 @@
 #include <mutex>
 #include <random>
 #include <string>
+#include <utility>
 #include <thread>
 #include <vector>
 
@@ -757,16 +758,25 @@ namespace ZChatIM::mm1::security {
             return m;
         }
 
+        uint64_t SeedSecureInt64Engine()
+        {
+            constexpr int kAttempts = 3;
+            for (int i = 0; i < kAttempts; ++i) {
+                const auto b = mm2::Crypto::GenerateSecureRandom(sizeof(uint64_t));
+                if (b.size() == sizeof(uint64_t)) {
+                    uint64_t s = 0;
+                    std::memcpy(&s, b.data(), sizeof(s));
+                    return s;
+                }
+            }
+            // OpenSSL/RAND 不可用时的最后手段：OS random_device（非 CSPRNG 强度与 RAND 相同，但优于固定种子 0）。
+            std::random_device rd;
+            return (static_cast<uint64_t>(rd()) << 32) | static_cast<uint64_t>(rd());
+        }
+
         std::mt19937_64& secureInt64Engine()
         {
-            static std::mt19937_64 eng([]() -> uint64_t {
-                auto b = mm2::Crypto::GenerateSecureRandom(sizeof(uint64_t));
-                uint64_t s = 0;
-                if (b.size() == sizeof(uint64_t)) {
-                    std::memcpy(&s, b.data(), sizeof(s));
-                }
-                return s;
-            }());
+            static std::mt19937_64 eng(SeedSecureInt64Engine());
             return eng;
         }
 
@@ -828,6 +838,9 @@ namespace ZChatIM::mm1::security {
 
     bool KeyManagement::StoreMasterKey(const std::vector<uint8_t>& key)
     {
+        if (!ValidateKey(key) || !CheckKeyStrength(key)) {
+            return false;
+        }
         m_masterKey = key;
         return true;
     }
@@ -845,8 +858,8 @@ namespace ZChatIM::mm1::security {
     std::vector<uint8_t> KeyManagement::RefreshMasterKey()
     {
         std::vector<uint8_t> k = GenerateMasterKey();
-        if (!k.empty()) {
-            (void)StoreMasterKey(k);
+        if (k.empty() || !StoreMasterKey(k)) {
+            return {};
         }
         return k;
     }
@@ -935,7 +948,7 @@ namespace ZChatIM::mm1::security {
     int64_t SecureRandom::GenerateInt64(int64_t min, int64_t max)
     {
         if (min > max) {
-            return 0;
+            std::swap(min, max);
         }
         std::lock_guard<std::mutex> lk(secureInt64Mutex());
         std::uniform_int_distribution<int64_t> dist(min, max);
@@ -945,7 +958,7 @@ namespace ZChatIM::mm1::security {
     uint64_t SecureRandom::GenerateUInt64(uint64_t min, uint64_t max)
     {
         if (min > max) {
-            return 0;
+            std::swap(min, max);
         }
         std::lock_guard<std::mutex> lk(secureInt64Mutex());
         std::uniform_int_distribution<uint64_t> dist(min, max);

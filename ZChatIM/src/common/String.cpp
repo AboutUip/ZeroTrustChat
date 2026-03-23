@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <climits>
+#include <cstdint>
 #include <sstream>
 
 #if defined(_WIN32)
@@ -175,7 +176,11 @@ namespace ZChatIM::common {
     int64_t String::ToInt64(const std::string& str)
     {
         try {
-            return std::stoll(str);
+            const long long v = std::stoll(str);
+            if (v > static_cast<long long>(INT64_MAX) || v < static_cast<long long>(INT64_MIN)) {
+                return 0;
+            }
+            return static_cast<int64_t>(v);
         } catch (...) {
             return 0;
         }
@@ -184,7 +189,7 @@ namespace ZChatIM::common {
     uint64_t String::ToUInt64(const std::string& str)
     {
         try {
-            return std::stoull(str);
+            return static_cast<uint64_t>(std::stoull(str));
         } catch (...) {
             return 0;
         }

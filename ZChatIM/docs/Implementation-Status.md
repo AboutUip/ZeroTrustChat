@@ -100,7 +100,7 @@
 
 | 区域 | 状态 |
 |------|------|
-| **`jni/ZChatIMJNI.cpp` + `jni/JniNatives.cpp`** | **`JNI_OnLoad`** 注册 **`com.yhj.zchat.jni.ZChatIMNative`** 全部 **`native`** → **`JniInterface`**（与 **`01-JNI.md`** / **`JniInterface.h`** 同序）。 |
+| **`jni/ZChatIMJNI.cpp` + `jni/JniNatives.cpp`** | **`JNI_OnLoad`** 注册 **`com.ztrust.zchat.im.jni.ZChatIMNative`** 全部 **`native`** → **`JniInterface`**（与 **`01-JNI.md`** / **`JniInterface.h`** 同序）。 |
 | **`include/jni/*.h` + `src/jni/*.cpp`** | **`JniBridge`/`JniInterface` 已实现**；Java 对照 **`ZChatServer/.../ZChatIMNative.java`**。 |
 | **`include/common/JniSecurityPolicy.h`** | 策略常量/约定；**`mm2/MM2.h` 已包含**；**与 native 实现同步靠人工**。MM2 与其余 **`common/*` 工具**关系见 **第2.4节**。 |
 | `include/common/{Utils,Memory,String,File,Time,Random}.h` | 对应 `src/common/*.cpp`，命名空间 `ZChatIM::common`。边界与统计、RNG 分层（`Random` 的 `mt19937` vs `GenerateSecure*`）、`File` 读写与目录枚举语义以各头文件与实现为准。**勿与** `mm2::Crypto::s_initialized` 混淆。 |

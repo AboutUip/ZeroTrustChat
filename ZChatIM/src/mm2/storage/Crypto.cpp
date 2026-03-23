@@ -55,6 +55,7 @@ namespace ZChatIM::mm2 {
 
     bool Crypto::Init()
     {
+        std::lock_guard<std::mutex> lk(g_cryptoInitMutex);
         if (s_initialized) {
             return true;
         }

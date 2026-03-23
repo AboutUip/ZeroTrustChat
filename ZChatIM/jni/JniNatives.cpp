@@ -1,4 +1,4 @@
-// JNI ↔ JniInterface：与 com.yhj.zchat.jni.ZChatIMNative 方法名、签名一致（RegisterNatives）。
+// JNI ↔ JniInterface：与 com.ztrust.zchat.im.jni.ZChatIMNative 方法名、签名一致（RegisterNatives）。
 #include <jni.h>
 
 #include "jni/JniInterface.h"
@@ -1177,7 +1177,7 @@ extern "C" {
 
     JNIEXPORT jint JNICALL zchatim_RegisterNatives(JNIEnv* env)
     {
-        jclass cls = env->FindClass("com/yhj/zchat/jni/ZChatIMNative");
+        jclass cls = env->FindClass("com/ztrust/zchat/im/jni/ZChatIMNative");
         if (!cls) {
             return JNI_ERR;
         }
