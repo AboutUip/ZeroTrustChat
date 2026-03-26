@@ -180,6 +180,7 @@
 
     function formatUptime(sec) {
         if (sec == null || isNaN(sec)) return '—';
+        sec = Number.parseFloat(sec) * 1000;
         const s = Math.floor(sec % 60);
         const m = Math.floor((sec / 60) % 60);
         const h = Math.floor((sec / 3600) % 24);
@@ -227,6 +228,7 @@
                 cpu != null ? (cpu * 100).toFixed(1) + ' %' : '—';
 
             const up = await fetchMetric('process.uptime');
+
             document.getElementById('uptime').textContent = formatUptime(up != null ? up / 1000 : null);
 
             const th = await fetchMetric('jvm.threads.live');
@@ -241,7 +243,7 @@
         if (timer) clearInterval(timer);
         const sec = Math.max(3, Math.min(120, parseInt(intervalInput.value, 10) || 10));
         intervalInput.value = String(sec);
-        timer = setInterval(refresh, sec * 1000);
+        timer = setInterval(refresh, sec * 100);
     }
 
     intervalInput.addEventListener('change', function () { refresh(); schedule(); });
