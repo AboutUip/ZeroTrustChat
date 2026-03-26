@@ -17,12 +17,30 @@
 
     <properties>
         <java.version>17</java.version>
+        <!-- JDK 24+ 追加 JVM 参数（见 profile jdk24-jvm-warnings）；Surefire / spring-boot:run 共用 -->
+        <jdk24.jvm.extra.args></jdk24.jvm.extra.args>
     </properties>
 
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
         <dependency>
             <groupId>io.netty</groupId>
@@ -39,15 +57,43 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+
+    <profiles>
+        <profile>
+            <id>jdk24-jvm-warnings</id>
+            <activation>
+                <jdk>[24,)</jdk>
+            </activation>
+            <properties>
+                <!-- Netty 堆外内存：JEP 498；见 https://netty.io/wiki/java-24-and-sun.misc.unsafe.html -->
+                <!-- classpath 上 JNI System.load：须允许 unnamed 模块原生访问（NativeLibraryLoader） -->
+                <jdk24.jvm.extra.args>--sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED</jdk24.jvm.extra.args>
+            </properties>
+        </profile>
+    </profiles>
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- 仅追加 JVM 参数；若日后接入 JaCoCo，请按 Spring Boot 文档合并 @{argLine} -->
+                    <argLine>${jdk24.jvm.extra.args}</argLine>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <mainClass>com.ztrust.zchat.boot.ZChatApplication</mainClass>
+                    <jvmArguments>${jdk24.jvm.extra.args}</jvmArguments>
                 </configuration>
             </plugin>
         </plugins>

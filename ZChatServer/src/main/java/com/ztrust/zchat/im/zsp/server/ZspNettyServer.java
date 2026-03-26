@@ -1,6 +1,5 @@
 package com.ztrust.zchat.im.zsp.server;
 
-import com.ztrust.zchat.im.zsp.ZspAuthTag;
 import com.ztrust.zchat.im.zsp.ZspFrameDecoder;
 import com.ztrust.zchat.im.zsp.ZspFrameEncoder;
 import io.netty.bootstrap.ServerBootstrap;

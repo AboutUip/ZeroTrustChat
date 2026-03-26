@@ -1,5 +1,6 @@
 package com.ztrust.zchat.im.zsp.server;
 
+import com.ztrust.zchat.im.zsp.replay.ZspPeerReplayState;
 import io.netty.util.AttributeKey;
 
 public final class ZspChannelAttributes {
@@ -9,6 +10,12 @@ public final class ZspChannelAttributes {
 
     public static final AttributeKey<Long> OUTBOUND_SEQUENCE =
             AttributeKey.valueOf("zchatZspOutboundSequence");
+
+    public static final AttributeKey<byte[]> AUTH_USER_ID_16 =
+            AttributeKey.valueOf("zchatZspAuthUserId16");
+
+    public static final AttributeKey<ZspPeerReplayState> REPLAY_STATE =
+            AttributeKey.valueOf("zchatZspReplayState");
 
     private ZspChannelAttributes() {}
 }

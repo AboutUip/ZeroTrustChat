@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "../Types.h"
 #include "../common/JniSecurityPolicy.h"
@@ -25,6 +25,8 @@ namespace ZChatIM
 				const std::string& dataDir,
 				const std::string& indexDir,
 				const char* messageKeyPassphraseUtf8);
+			/** 最近一次 Initialize / InitializeWithPassphrase 失败时的说明（MM1/MM2）；成功或未调用时为空。 */
+			std::string LastInitializeError() const;
 			void Cleanup();
 
 			// Idempotent; m_initialized=false release only; no m_apiRecursiveMutex here (EmergencyWipe).
@@ -432,6 +434,7 @@ namespace ZChatIM
 			// CheckInitialized without bridge lock; use release/acquire with Init/Cleanup/Wipe.
 			std::atomic<bool> m_initialized{ false };
 			mutable std::recursive_mutex m_apiRecursiveMutex;
+			std::string m_lastInitializeError;
 
 			mm1::MM1& m_mm1;
 			mm2::MM2& m_mm2;

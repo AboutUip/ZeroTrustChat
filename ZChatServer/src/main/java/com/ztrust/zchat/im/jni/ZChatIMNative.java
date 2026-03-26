@@ -17,6 +17,12 @@ public final class ZChatIMNative {
 
     public static native boolean initializeWithPassphrase(String dataDir, String indexDir, String passphrase);
 
+    /**
+     * 最近一次 {@link #initialize} / {@link #initializeWithPassphrase} 失败时的 C++ 侧说明（如 MM2::LastError）；
+     * 成功或未调用时一般为 {@code null}。
+     */
+    public static native String lastInitializeError();
+
     public static native void cleanup();
 
     public static native byte[] auth(byte[] userId, byte[] token, byte[] clientIp);

@@ -1,0 +1,11 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="ZChatApplication" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot">
+    <module name="ZChat" />
+    <option name="SHORTEN_COMMAND_LINE" value="JAR_MANIFEST" />
+    <option name="SPRING_BOOT_MAIN_CLASS" value="com.ztrust.zchat.boot.ZChatApplication" />
+    <option name="VM_PARAMETERS" value="--sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>

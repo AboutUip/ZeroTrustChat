@@ -17,6 +17,10 @@ public final class ZspFrameDecoder extends ByteToMessageDecoder {
         if (in.getUnsignedShort(start) != ZspConstants.MAGIC) {
             throw new ZspCodecException("Invalid ZSP magic");
         }
+        int ver = in.getUnsignedByte(start + 2);
+        if (ver != ZspConstants.PROTOCOL_VERSION) {
+            throw new ZspCodecException("Unsupported ZSP version: " + ver);
+        }
         int payloadLen = in.getUnsignedShort(start + 14);
         int metaLen = in.getUnsignedShort(start + 16);
         if (metaLen < ZspConstants.MIN_META_LENGTH || metaLen > ZspConstants.MAX_META_LENGTH) {

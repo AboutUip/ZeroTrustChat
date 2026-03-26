@@ -7,6 +7,7 @@
 #include "Types.h"
 
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <limits>
 #include <sstream>
@@ -134,40 +135,82 @@ namespace ZChatIM::jni {
         const char*        messageKeyPassphraseUtf8)
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        if (dataDir.empty() || indexDir.empty()) {
-            return false;
-        }
-        if (m_initialized.load(std::memory_order_acquire)) {
-            if (!m_mm2.IsInitialized()) {
-                m_initialized.store(false, std::memory_order_release);
-            } else {
-                const std::string wantD = NormalizeLocalPathUtf8ForCompare(dataDir);
-                const std::string wantI = NormalizeLocalPathUtf8ForCompare(indexDir);
-                if (wantD != NormalizeLocalPathUtf8ForCompare(m_mm2.GetDataDirUtf8())
-                    || wantI != NormalizeLocalPathUtf8ForCompare(m_mm2.GetIndexDirUtf8())) {
-                    return false;
-                }
-                return true;
+        try {
+            m_lastInitializeError.clear();
+            if (dataDir.empty() || indexDir.empty()) {
+                m_lastInitializeError = "empty dataDir or indexDir";
+                return false;
             }
-        }
-        if (!m_mm1.Initialize()) {
+            if (m_initialized.load(std::memory_order_acquire)) {
+                if (!m_mm2.IsInitialized()) {
+                    m_initialized.store(false, std::memory_order_release);
+                } else {
+                    const std::string wantD = NormalizeLocalPathUtf8ForCompare(dataDir);
+                    const std::string wantI = NormalizeLocalPathUtf8ForCompare(indexDir);
+                    if (wantD != NormalizeLocalPathUtf8ForCompare(m_mm2.GetDataDirUtf8())
+                        || wantI != NormalizeLocalPathUtf8ForCompare(m_mm2.GetIndexDirUtf8())) {
+                        m_lastInitializeError =
+                            "already initialized with different data-dir or index-dir (re-init not allowed)";
+                        return false;
+                    }
+                    return true;
+                }
+            }
+            if (!m_mm1.Initialize()) {
+                m_lastInitializeError = "MM1::Initialize failed (Crypto::Init)";
+                return false;
+            }
+            if (!m_mm2.Initialize(dataDir, indexDir, messageKeyPassphraseUtf8)) {
+                std::string e = m_mm2.LastError();
+                if (e.empty()) {
+                    e = "MM2::Initialize failed";
+                }
+                m_lastInitializeError = std::move(e);
+                m_mm1.Cleanup();
+                return false;
+            }
+            m_initialized.store(true, std::memory_order_release);
+            m_lastInitializeError.clear();
+            return true;
+        } catch (const std::exception& ex) {
+            m_lastInitializeError = std::string("Initialize exception: ") + ex.what();
+            m_initialized.store(false, std::memory_order_release);
+            try {
+                m_mm2.Cleanup();
+                m_mm1.Cleanup();
+            } catch (...) {
+            }
+            return false;
+        } catch (...) {
+            m_lastInitializeError = "Initialize exception: unknown";
+            m_initialized.store(false, std::memory_order_release);
+            try {
+                m_mm2.Cleanup();
+                m_mm1.Cleanup();
+            } catch (...) {
+            }
             return false;
         }
-        if (!m_mm2.Initialize(dataDir, indexDir, messageKeyPassphraseUtf8)) {
-            m_mm1.Cleanup();
-            return false;
-        }
-        m_initialized.store(true, std::memory_order_release);
-        return true;
+    }
+
+    std::string JniBridge::LastInitializeError() const
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        return m_lastInitializeError;
     }
 
     void JniBridge::Cleanup()
     {
         const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
-        m_mm2.Cleanup();
-        m_mm1.ClearAllAuthSessions();
-        m_mm1.Cleanup();
-        NotifyExternalTrustedZoneWipeHandled();
+        try {
+            m_mm2.Cleanup();
+            m_mm1.ClearAllAuthSessions();
+            m_mm1.Cleanup();
+            NotifyExternalTrustedZoneWipeHandled();
+        } catch (...) {
+            // JNI 边界必须避免异常穿透至 JVM。
+            m_initialized.store(false, std::memory_order_release);
+        }
     }
 
     void JniBridge::NotifyExternalTrustedZoneWipeHandled()

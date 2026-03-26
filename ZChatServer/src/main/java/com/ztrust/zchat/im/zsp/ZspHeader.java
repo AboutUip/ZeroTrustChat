@@ -2,6 +2,9 @@ package com.ztrust.zchat.im.zsp;
 
 import io.netty.buffer.ByteBuf;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
 public record ZspHeader(
         int magic,
         int version,
@@ -33,5 +36,19 @@ public record ZspHeader(
         out.writeInt((int) (sessionId & 0xFFFFFFFFL));
         out.writeInt((int) (sequence & 0xFFFFFFFFL));
         out.writeShort(payloadLength);
+    }
+
+    /** 与 on-wire Header 16 字节一致（用于 HMAC 等完整性计算）。 */
+    public byte[] toBytesBigEndian() {
+        ByteBuffer buf = ByteBuffer.allocate(16).order(ByteOrder.BIG_ENDIAN);
+        buf.putShort((short) magic);
+        buf.put((byte) version);
+        buf.put((byte) messageType);
+        buf.put((byte) flags);
+        buf.put((byte) reserved);
+        buf.putInt((int) (sessionId & 0xFFFFFFFFL));
+        buf.putInt((int) (sequence & 0xFFFFFFFFL));
+        buf.putShort((short) payloadLength);
+        return buf.array();
     }
 }

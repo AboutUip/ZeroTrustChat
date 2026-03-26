@@ -18,11 +18,11 @@
 
 ---
 
-**P0**：`kNativeMethods[]` 与 `ZChatIMNative.java` 须 1:1（含 `initializeWithPassphrase`、本地账户、`rtc*`、`validateJniCall` 两签名）；否则 `JNI_OnLoad` 失败。
+**P0**：`kNativeMethods[]` 与 `ZChatIMNative.java` 须 1:1（含 `initializeWithPassphrase`、`lastInitializeError`、本地账户、`rtc*`、`validateJniCall` 两签名）；否则 `JNI_OnLoad` 失败。
 
 **维护**：`C++` 列 ↔ `JniInterface.h` / `JniBridge.h`；流程见 [`JNI-API-Documentation.md`](../../ZChatIM/docs/JNI-API-Documentation.md) 第0节。改 API 须同步本文、该文档、头文件与 Java。
 
-**caller**：首参 `callerSessionId`（16B，同 `Auth` 返回值），下文记为 caller。无 caller：`Initialize`、`InitializeWithPassphrase`、`Cleanup`、`Auth`、`VerifySession`、`RegisterLocalUser`、`AuthWithLocalPassword`、`HasLocalPassword`、`ResetLocalPasswordWithRecovery`、`ValidateJniCall`（两重载）。其余经 `TryBindCaller`；已 `Initialize` 时与 `VerifySession(caller)` 对同一会话等价。`imSessionId` 为 16B IM 通道 id，与 ZSP 头 4 字节 `SESSION_ID_SIZE` 无关。`DestroySession`：两会话 id 均须绑定成功且 principal 相同。TLS：`VerifyPinnedServerCertificate`、`RecordFailure` 见 [`02-ZSP-Protocol.md`](../01-Architecture/02-ZSP-Protocol.md) 第十节与 `JniSecurityPolicy.h`（caller 可空规则以实现为准）。
+**caller**：首参 `callerSessionId`（16B，同 `Auth` 返回值），下文记为 caller。无 caller：`Initialize`、`InitializeWithPassphrase`、`lastInitializeError`、`Cleanup`、`Auth`、`VerifySession`、`RegisterLocalUser`、`AuthWithLocalPassword`、`HasLocalPassword`、`ResetLocalPasswordWithRecovery`、`ValidateJniCall`（两重载）。其余经 `TryBindCaller`；已 `Initialize` 时与 `VerifySession(caller)` 对同一会话等价。`imSessionId` 为 16B IM 通道 id，与 ZSP 头 4 字节 `SESSION_ID_SIZE` 无关。`DestroySession`：两会话 id 均须绑定成功且 principal 相同。TLS：`VerifyPinnedServerCertificate`、`RecordFailure` 见 [`02-ZSP-Protocol.md`](../01-Architecture/02-ZSP-Protocol.md) 第十节与 `JniSecurityPolicy.h`（caller 可空规则以实现为准）。
 
 **并发**：`m_apiRecursiveMutex`（桥接）、`MM1::m_apiRecursiveMutex`、`MM2::m_stateMutex`；`m_initialized` 语义见 `JniSecurityPolicy.h` 第5节。`Get*Manager()` 仅保证取引用瞬间持锁；链式调用见 `JNI-API-Documentation.md` 第0节第7条。`MessageQueryManager` 仅在 MM2 已持 `m_stateMutex` 时使用。
 
@@ -52,6 +52,7 @@
 |-----|-------------------|------|-------------|------|
 | `Initialize` | initialize | dataDir(string), indexDir(string) | `bool` | MM1+MM2；路径非空。幂等与路径一致性见 `JniBridge::Initialize`、`JNI-API-Documentation.md` 第2节（生命周期） |
 | `InitializeWithPassphrase` | initializeWithPassphrase | dataDir(string), indexDir(string), messageKeyPassphraseUtf8(`const char*`，可 null；非 null 须非空 C 串) | `bool` | MM2+ZMKP；须 SQLCipher。`nullptr`/Java `null` 同 `Initialize` |
+| `LastInitializeError` | lastInitializeError | - | `string`（Java `null` 当空） | 最近一次 `Initialize`/`InitializeWithPassphrase` 失败说明（`JniBridge` 或 `MM2::LastError`）；成功或未调用时为空 |
 | `Cleanup` | cleanup | - | `void` | MM2::Cleanup → 清 Auth → MM1::Cleanup → Notify*；与 EmergencyWipe 出口见 `JniSecurityPolicy.h` 第8节 |
 
 ## 一、认证模块

@@ -305,6 +305,8 @@ Identity Key (长期) → PreKey Bundle → Session Key → Message Key
 
 AEAD 加密输出，包含加密数据完整性认证。
 
+**与 Java 网关（Spring Boot / Netty）**：若部署使用 **网关帧完整性（HMAC-SHA256 截断）** 或 **16 字节全零占位**，客户端与服务器须与 **[03-ZSP-Gateway-Client-Contract.md](03-ZSP-Gateway-Client-Contract.md)** 一致；**不得**假定网关始终产生协议原文所述的 **AES-GCM AEAD Tag**，除非产品明确仅 E2E 且网关 Tag 另有约定。
+
 ---
 
 ## 十、传输层

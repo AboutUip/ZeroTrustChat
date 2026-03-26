@@ -27,7 +27,10 @@ namespace {
     jbyteArray ToJBytesEmptyOk(JNIEnv* env, const std::vector<uint8_t>& v)
     {
         const jsize n = static_cast<jsize>(v.size());
-        jbyteArray a    = env->NewByteArray(n);
+        jbyteArray a = env->NewByteArray(n);
+        if (a == nullptr) {
+            return nullptr;
+        }
         if (n > 0) {
             env->SetByteArrayRegion(a, 0, n, reinterpret_cast<const jbyte*>(v.data()));
         }
@@ -49,6 +52,9 @@ namespace {
             return {};
         }
         const char* u = env->GetStringUTFChars(s, nullptr);
+        if (!u) {
+            return {};
+        }
         std::string out(u ? u : "");
         env->ReleaseStringUTFChars(s, u);
         return out;
@@ -62,12 +68,36 @@ namespace {
     jobject NewStringStringMap(JNIEnv* env, const std::map<std::string, std::string>& m)
     {
         jclass    mapCls  = env->FindClass("java/util/HashMap");
+        if (mapCls == nullptr) {
+            return nullptr;
+        }
         jmethodID ctor    = env->GetMethodID(mapCls, "<init>", "()V");
+        if (ctor == nullptr) {
+            env->DeleteLocalRef(mapCls);
+            return nullptr;
+        }
         jmethodID put     = env->GetMethodID(mapCls, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+        if (put == nullptr) {
+            env->DeleteLocalRef(mapCls);
+            return nullptr;
+        }
         jobject   mapObj  = env->NewObject(mapCls, ctor);
+        if (mapObj == nullptr) {
+            env->DeleteLocalRef(mapCls);
+            return nullptr;
+        }
         for (const auto& pr : m) {
             jstring k = env->NewStringUTF(pr.first.c_str());
             jstring v = env->NewStringUTF(pr.second.c_str());
+            if (k == nullptr || v == nullptr) {
+                if (k) {
+                    env->DeleteLocalRef(k);
+                }
+                if (v) {
+                    env->DeleteLocalRef(v);
+                }
+                continue;
+            }
             env->CallObjectMethod(mapObj, put, k, v);
             env->DeleteLocalRef(k);
             env->DeleteLocalRef(v);
@@ -99,8 +129,14 @@ namespace {
         }
         const jsize n = static_cast<jsize>(rows.size());
         jobjectArray out = env->NewObjectArray(n, g_byteArrayClass, nullptr);
+        if (out == nullptr) {
+            return nullptr;
+        }
         for (jsize i = 0; i < n; ++i) {
             jbyteArray row = ToJBytesEmptyOk(env, rows[static_cast<size_t>(i)]);
+            if (row == nullptr) {
+                return out;
+            }
             env->SetObjectArrayElement(out, i, row);
             env->DeleteLocalRef(row);
         }
@@ -158,6 +194,16 @@ extern "C" {
             env->ReleaseStringUTFChars(passphrase, p);
         }
         return static_cast<jboolean>(ok);
+    }
+
+    JNIEXPORT jstring JNICALL
+    n_lastInitializeError(JNIEnv* env, jclass)
+    {
+        const std::string s = ZChatIM::jni::JniInterface::LastInitializeError();
+        if (s.empty()) {
+            return nullptr;
+        }
+        return env->NewStringUTF(s.c_str());
     }
 
     ZCHAT_JNI n_cleanup(JNIEnv* env, jclass)
@@ -1088,6 +1134,7 @@ extern "C" {
         {"initializeWithPassphrase",
          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z",
          reinterpret_cast<void*>(n_initializeWithPassphrase)},
+        {"lastInitializeError", "()Ljava/lang/String;", reinterpret_cast<void*>(n_lastInitializeError)},
         {"cleanup", "()V", reinterpret_cast<void*>(n_cleanup)},
         {"auth", "([B[B[B)[B", reinterpret_cast<void*>(n_auth)},
         {"verifySession", "([B)Z", reinterpret_cast<void*>(n_verifySession)},

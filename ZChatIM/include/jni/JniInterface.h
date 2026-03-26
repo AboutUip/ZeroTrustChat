@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <map>
 #include "../Types.h"
@@ -17,6 +17,7 @@ namespace ZChatIM
 				const std::string& dataDir,
 				const std::string& indexDir,
 				const char* messageKeyPassphraseUtf8);
+			static std::string LastInitializeError();
 			static void Cleanup();
 
 			static void NotifyExternalTrustedZoneWipeHandled();

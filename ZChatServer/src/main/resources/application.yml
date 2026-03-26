@@ -1,15 +1,74 @@
 spring:
   application:
     name: zchat-server
+  web:
+    resources:
+      # 关闭默认 /** → classpath:/static/，否则 /actuator/* 会落到 ResourceHttpRequestHandler 出现 404
+      add-mappings: false
+  # Actuator(/actuator/*) 与 Ops 登录(/ops/login)共用账号；与 ZSP 无关。生产务必改密并通过 HTTPS 或内网访问。
+  security:
+    user:
+      name: ${ZCHAT_ACTUATOR_USER:actuator}
+      password: ${ZCHAT_ACTUATOR_PASSWORD:change-me-before-production}
 
+# HTTP：供 Actuator（/actuator/*）；ZSP TCP 见 zchat.zsp.port，二者独立。
+# 仅本机可设 ZCHAT_HTTP_BIND_ADDRESS=127.0.0.1，避免对外网卡暴露运维端口（仍须配合防火墙/TLS）。
+server:
+  port: 8080
+  address: ${ZCHAT_HTTP_BIND_ADDRESS:0.0.0.0}
+  tomcat:
+    # 访问日志默认写入工作目录下的 logs/（与控制台分离）；若需文件审计可打开并配合 directory/prefix
+    accesslog:
+      enabled: false
+
+# Actuator：健康检查与 Micrometer 指标（不含业务载荷；见 docs/03-Business/01-SpringBoot.md）
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  endpoint:
+    health:
+      # 已认证请求（含面板与 Basic）可查看 components；匿名仍为摘要
+      show-details: when_authorized
+    prometheus:
+      enabled: true
+  # Spring Boot 3.4+：Prometheus 导出前缀为 management.prometheus.metrics.export（非 metrics.export.prometheus）
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  health:
+    defaults:
+      enabled: true
+
+# 客户端字节约定与网关行为：docs/01-Architecture/03-ZSP-Gateway-Client-Contract.md
+# 日志策略：docs/03-Business/01-SpringBoot.md 第八节（默认关闭 ZSP 诊断日志）
 zchat:
   zsp:
     enabled: true
+    diagnostic-logging: false
     port: 8848
     boss-threads: 1
     worker-threads: 0
     reader-idle-seconds: 90
-    jni-enabled: false
+    # JNI：必选。启动时加载 ZChatIMNative 并 initialize；须配置 native.data-dir / index-dir（及按需 passphrase）
+    heartbeat-echo: true
+    replay-protection-enabled: true
+    require-encrypted-flag: false
+    opaque-routing-min-bytes: 32
+    # NONE | HMAC_SHA256_128（与协议 AES-GCM Tag 不同，须客户端对齐）
+    frame-tag-mode: NONE
+    # HMAC 模式下必填；建议用环境变量或密钥管理注入
+    frame-integrity-secret: ""
+    verify-inbound-auth-tag: false
+    replay-timestamp-window-minutes: 5
+    reject-compressed-payload: true
+    offline-queue-enabled: true
+    offline-queue-max-per-user: 256
     native:
-      data-dir: ${java.io.tmpdir}/zchat-mm-data
-      index-dir: ${java.io.tmpdir}/zchat-mm-index
+      # 默认 ${user.dir}/target/...（ASCII），避免 Windows 上 java.io.tmpdir 含中文路径导致 C++ create_directories 失败
+      data-dir: ${ZCHAT_MM_DATA_DIR:${user.dir}/target/zchat-mm-data}
+      index-dir: ${ZCHAT_MM_INDEX_DIR:${user.dir}/target/zchat-mm-index}
+      # initialize() 失败且 C++ 侧需要口令时再填（或通过环境变量注入）
+      passphrase: ""

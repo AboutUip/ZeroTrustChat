@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>ZChat 服务面板</title>
+    <style>
+        :root {
+            --bg: #0f1419;
+            --card: #1a2332;
+            --border: #2d3a4d;
+            --text: #e6edf3;
+            --muted: #8b9cb3;
+            --ok: #3fb950;
+            --warn: #d29922;
+            --bad: #f85149;
+            --accent: #58a6ff;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+        header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        header h1 {
+            margin: 0;
+            font-size: 1.15rem;
+            font-weight: 600;
+        }
+        header .sub {
+            color: var(--muted);
+            font-size: 0.85rem;
+        }
+        .toolbar {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .toolbar label { font-size: 0.8rem; color: var(--muted); }
+        .toolbar input { width: 4rem; }
+        main { padding: 1rem 1.5rem 2rem; max-width: 960px; margin: 0 auto; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 1rem;
+        }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem 1.1rem;
+        }
+        .card h2 {
+            margin: 0 0 0.5rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--muted);
+        }
+        .card .value {
+            font-size: 1.35rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            word-break: break-all;
+        }
+        .status-up { color: var(--ok); }
+        .status-down { color: var(--bad); }
+        .status-unknown { color: var(--warn); }
+        .links {
+            margin-top: 1.25rem;
+            font-size: 0.9rem;
+        }
+        .links a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .links a:hover { text-decoration: underline; }
+        .err {
+            margin-top: 1rem;
+            padding: 0.75rem 1rem;
+            background: rgba(248, 81, 73, 0.12);
+            border: 1px solid var(--bad);
+            border-radius: 6px;
+            font-size: 0.85rem;
+            display: none;
+        }
+        .err.visible { display: block; }
+        footer {
+            margin-top: 2rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+            font-size: 0.75rem;
+            color: var(--muted);
+        }
+    </style>
+</head>
+<body>
+<header>
+    <h1>ZChat 服务面板</h1>
+    <span class="sub">HTTP Basic 与 Actuator 相同账号；数据来自 Actuator</span>
+    <div class="toolbar">
+        <label for="interval">刷新(秒)</label>
+        <input id="interval" type="number" min="3" max="120" value="10"/>
+        <a href="/ops/logout" style="color: var(--accent); text-decoration: none; font-size: 0.85rem;">退出登录</a>
+    </div>
+</header>
+<main>
+    <div id="err" class="err"></div>
+    <div class="grid">
+        <div class="card">
+            <h2>整体状态</h2>
+            <div id="health-status" class="value status-unknown">加载中…</div>
+        </div>
+        <div class="card">
+            <h2>JVM 已用内存</h2>
+            <div id="mem-used" class="value">—</div>
+        </div>
+        <div class="card">
+            <h2>JVM 最大堆</h2>
+            <div id="mem-max" class="value">—</div>
+        </div>
+        <div class="card">
+            <h2>进程 CPU</h2>
+            <div id="cpu" class="value">—</div>
+        </div>
+        <div class="card">
+            <h2>运行时间</h2>
+            <div id="uptime" class="value">—</div>
+        </div>
+        <div class="card">
+            <h2>活跃线程</h2>
+            <div id="threads" class="value">—</div>
+        </div>
+    </div>
+    <div class="links">
+        <a href="/actuator/health" target="_blank" rel="noopener">原始 health JSON</a>
+        ·
+        <a href="/actuator/metrics" target="_blank" rel="noopener">指标列表</a>
+        ·
+        <a href="/actuator/prometheus" target="_blank" rel="noopener">Prometheus 文本</a>
+    </div>
+    <footer>
+        与 ZSP TCP 端口无关；仅 HTTP 运维视图。生产请配合 HTTPS、内网或反向代理。
+    </footer>
+</main>
+<script>
+(function () {
+    const errEl = document.getElementById('err');
+    const intervalInput = document.getElementById('interval');
+
+    function showErr(msg) {
+        errEl.textContent = msg;
+        errEl.classList.add('visible');
+    }
+    function clearErr() {
+        errEl.textContent = '';
+        errEl.classList.remove('visible');
+    }
+
+    function formatBytes(n) {
+        if (n == null || isNaN(n)) return '—';
+        const u = ['B', 'KB', 'MB', 'GB'];
+        let v = n;
+        let i = 0;
+        while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+        return v.toFixed(i ? 1 : 0) + ' ' + u[i];
+    }
+
+    function formatUptime(sec) {
+        if (sec == null || isNaN(sec)) return '—';
+        const s = Math.floor(sec % 60);
+        const m = Math.floor((sec / 60) % 60);
+        const h = Math.floor((sec / 3600) % 24);
+        const d = Math.floor(sec / 86400);
+        const parts = [];
+        if (d) parts.push(d + 'd');
+        if (h || d) parts.push(h + 'h');
+        parts.push(m + 'm');
+        parts.push(s + 's');
+        return parts.join(' ');
+    }
+
+    async function fetchJson(path) {
+        const r = await fetch(path, { credentials: 'same-origin' });
+        if (!r.ok) throw new Error(path + ' → HTTP ' + r.status);
+        return r.json();
+    }
+
+    async function fetchMetric(name) {
+        try {
+            const j = await fetchJson('/actuator/metrics/' + encodeURIComponent(name));
+            const m = j.measurements && j.measurements[0];
+            return m ? m.value : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    async function refresh() {
+        try {
+            clearErr();
+            const health = await fetchJson('/actuator/health');
+            const status = (health.status || 'UNKNOWN').toUpperCase();
+            const el = document.getElementById('health-status');
+            el.textContent = status;
+            el.className = 'value ' + (status === 'UP' ? 'status-up' : status === 'DOWN' ? 'status-down' : 'status-unknown');
+
+            const memUsed = await fetchMetric('jvm.memory.used');
+            const memMax = await fetchMetric('jvm.memory.max');
+            document.getElementById('mem-used').textContent = formatBytes(memUsed);
+            document.getElementById('mem-max').textContent = formatBytes(memMax);
+
+            const cpu = await fetchMetric('process.cpu.usage');
+            document.getElementById('cpu').textContent =
+                cpu != null ? (cpu * 100).toFixed(1) + ' %' : '—';
+
+            const up = await fetchMetric('process.uptime');
+            document.getElementById('uptime').textContent = formatUptime(up != null ? up / 1000 : null);
+
+            const th = await fetchMetric('jvm.threads.live');
+            document.getElementById('threads').textContent = th != null ? String(Math.round(th)) : '—';
+        } catch (e) {
+            showErr('刷新失败：' + (e && e.message ? e.message : e));
+        }
+    }
+
+    let timer = null;
+    function schedule() {
+        if (timer) clearInterval(timer);
+        const sec = Math.max(3, Math.min(120, parseInt(intervalInput.value, 10) || 10));
+        intervalInput.value = String(sec);
+        timer = setInterval(refresh, sec * 1000);
+    }
+
+    intervalInput.addEventListener('change', function () { refresh(); schedule(); });
+    refresh();
+    schedule();
+})();
+</script>
+</body>
+</html>

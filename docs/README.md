@@ -15,6 +15,7 @@
 | [AUTHORITY.md](AUTHORITY.md) | 权威顺序、持久化摘要、交付判定 |
 | [01-Architecture/01-Overview.md](01-Architecture/01-Overview.md) | 架构总览 |
 | [01-Architecture/02-ZSP-Protocol.md](01-Architecture/02-ZSP-Protocol.md) | ZSP |
+| [01-Architecture/03-ZSP-Gateway-Client-Contract.md](01-Architecture/03-ZSP-Gateway-Client-Contract.md) | ZSP 网关—客户端实现契约（与 `ZChatServer` 对齐） |
 | [02-Core/01-MM1.md](02-Core/01-MM1.md) | MM1 |
 | [02-Core/02-MM2.md](02-Core/02-MM2.md) | MM2 概念 |
 | [02-Core/03-Storage.md](02-Core/03-Storage.md) | 元数据、MM2、密钥 4.2～4.3、第七节 |

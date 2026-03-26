@@ -20,6 +20,11 @@ namespace ZChatIM::jni {
         return JniBridge::Instance().Initialize(dataDir, indexDir, messageKeyPassphraseUtf8);
     }
 
+    std::string JniInterface::LastInitializeError()
+    {
+        return JniBridge::Instance().LastInitializeError();
+    }
+
     void JniInterface::Cleanup()
     {
         JniBridge::Instance().Cleanup();
