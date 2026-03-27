@@ -15,6 +15,15 @@ import io.netty.handler.timeout.IdleStateHandler;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
+import java.net.SocketAddress;
+import java.net.SocketException;
+import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -69,7 +78,13 @@ public final class ZspNettyServer implements SmartLifecycle {
             ChannelFuture future = bootstrap.bind(props.getPort()).sync();
             serverChannel = future.channel();
             running = true;
-            LOG.log(Level.INFO, "ZSP TCP listening on port {0}", props.getPort());
+            SocketAddress local = serverChannel.localAddress();
+            if (local instanceof InetSocketAddress inet) {
+                LOG.info("ZSP TCP listening on " + normalizeBindIp(inet.getAddress()) + ":" + inet.getPort());
+            } else {
+                LOG.info("ZSP TCP listening on port " + props.getPort());
+            }
+            logClientConnectHints();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             shutdownGroups();
@@ -113,5 +128,46 @@ public final class ZspNettyServer implements SmartLifecycle {
     @Override
     public boolean isRunning() {
         return running;
+    }
+
+    private void logClientConnectHints() {
+        List<String> candidates = listCandidateIpv4();
+        if (candidates.isEmpty()) {
+            LOG.info("Client connect hint: 127.0.0.1:" + props.getPort());
+            return;
+        }
+        for (String ip : candidates) {
+            LOG.info("Client connect hint: " + ip + ":" + props.getPort());
+        }
+    }
+
+    private static List<String> listCandidateIpv4() {
+        List<String> ips = new ArrayList<>();
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            while (interfaces != null && interfaces.hasMoreElements()) {
+                NetworkInterface nif = interfaces.nextElement();
+                if (!nif.isUp() || nif.isLoopback() || nif.isVirtual()) {
+                    continue;
+                }
+                Enumeration<InetAddress> addresses = nif.getInetAddresses();
+                while (addresses.hasMoreElements()) {
+                    InetAddress addr = addresses.nextElement();
+                    if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
+                        ips.add(addr.getHostAddress());
+                    }
+                }
+            }
+        } catch (SocketException ex) {
+            // Keep startup robust; fallback hint is logged by caller.
+        }
+        return ips;
+    }
+
+    private static String normalizeBindIp(InetAddress address) {
+        if (address == null || address.isAnyLocalAddress()) {
+            return "0.0.0.0";
+        }
+        return address.getHostAddress();
     }
 }
