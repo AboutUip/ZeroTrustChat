@@ -176,6 +176,9 @@ Netty **监听/停止**等生命周期 INFO 仍可能出现在进程标准输出
 
 ## 九、JNI 与 Spring 联调测试
 
-- **DLL 位置**：**`ZChatServer/src/main/resources/native/windows-x64/`**（与 classpath **`/native/windows-x64/`** 一致）或 **`native/`** 根目录；由 `NativeLibraryLoader` 加载。联调类通过 **`JniItSupport`** 按上述路径自动设置 `zchat.native.dir`；其它路径仅用 **`ZCHAT_NATIVE_DLL_DIR`** 或 **`-Dzchat.native.dir`**。
+- **原生库位置**：
+  - **Windows**：**`ZChatServer/src/main/resources/native/windows-x64/`**（classpath **`/native/windows-x64/`**）。
+  - **Linux x64**：**`ZChatServer/src/main/resources/native/linux-x64/`**（classpath **`/native/linux-x64/`**），需 **`libcrypto.so.3`**、**`libssl.so.3`**、**`libZChatIMJNI.so`**（与 `NativeLibraryLoader` 加载顺序一致）；可用 **`ZChatServer/scripts/populate-linux-native-resources.sh`** 从 **`ZChatIM/build-linux/lib/`** 与系统 OpenSSL 复制。
+  由 `NativeLibraryLoader` 加载。联调类通过 **`JniItSupport`** 按上述路径自动设置 `zchat.native.dir`；其它路径仅用 **`ZCHAT_NATIVE_DLL_DIR`** 或 **`-Dzchat.native.dir`**。
 - **何时跑**：IDEA 内运行（classpath 含 `idea_rt.jar`）或 Maven 加 **`-Dzchat.it.jni.enabled=true`**；否则跳过联调类。
 - **`ZChatImJniInterop200Test`** / **`ZChatNativeSpringIntegrationIT`**：`validateJniCall*` 与 Spring 注入的 **`ZChatNativeOperations`** 烟测。

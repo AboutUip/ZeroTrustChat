@@ -18,8 +18,9 @@ import java.util.logging.Logger;
  * <ol>
  *   <li>系统属性 {@value #PROP_NATIVE_DIR}：指向已解压目录，按 {@link #loadFromDirectory} 顺序 {@link
  *       System#load(String)}（可显式控制依赖库顺序）。
- *   <li>类路径资源 {@code /native/&lt;subdir&gt;/}：与 Windows 相同布局，便于打 fat JAR（Linux 常用 {@code
- *       linux-x64}）。
+ *   <li>类路径资源 {@code /native/&lt;subdir&gt;/}：Maven 模块下为 {@code src/main/resources/native/&lt;subdir&gt;/}
+ *       （例如 Linux：{@code native/linux-x64/}，须含 {@link #LINUX_SO_ORDER} 所列文件名，见该目录内 {@code README.md}；
+ *       可用 {@code ZChatServer/scripts/populate-linux-native-resources.sh} 填充）。
  *   <li>{@link System#loadLibrary(String)} 名称 {@code ZChatIMJNI}（依赖 {@code java.library.path} /
  *       {@code LD_LIBRARY_PATH}，Linux 上实际文件名为 {@code libZChatIMJNI.so}）。
  * </ol>

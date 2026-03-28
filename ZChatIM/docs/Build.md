@@ -101,6 +101,7 @@ CMake 预设模式下，工具栏是 **三个** 下拉框（见 [Configure and b
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64   # 按本机 JDK 调整
 cd ZChatIM
 ./build-jni-linux.sh
+# 脚本若发现 thirdparty/sqlcipher/ 无 sqlite3.c、h，会从 prebuilt/windows-x64/amalgamation/ 自动复制（完整克隆应含该目录；仅影响 Linux 脚本，不涉及 Windows）。
 # 或手动：cmake --preset linux-jni-so-only && cmake --build --preset linux-jni-so-only-release
 # 产物：ZChatIM/build-linux/lib/libZChatIMJNI.so
 ```
@@ -130,7 +131,7 @@ CMake 应出现 **`MM2 crypto backend: OpenSSL3`**、**`Metadata SQLite: SQLCiph
 
 **`JAVA_HOME` 兜底**：若 **`FindJNI`** 失败，CMake 会读 **`JAVA_HOME/include`** 及 **`linux`** / **`darwin`** / **`win32`** 子目录，勿仅配置 **`include/win32`**（旧行为在 Linux 上会找不到 **`jni_md.h`**）。
 
-**Java 侧加载**：**`com.ztrust.zchat.im.jni.NativeLibraryLoader`** 支持 **`-Dzchat.native.dir=<目录>`** 显式 **`System.load` 顺序**、类路径 **`/native/linux-x64/`** 等打包资源，以及回退 **`System.loadLibrary("ZChatIMJNI")`**。
+**Java 侧加载**：**`com.ztrust.zchat.im.jni.NativeLibraryLoader`** 支持 **`-Dzchat.native.dir=<目录>`** 显式 **`System.load` 顺序**、类路径 **`/native/linux-x64/`**（Maven：**`ZChatServer/src/main/resources/native/linux-x64/`**，见该目录 **`README.md`**；脚本 **`ZChatServer/scripts/populate-linux-native-resources.sh`**），以及回退 **`System.loadLibrary("ZChatIMJNI")`**。
 
 ## 7. 控制台 EXE 与树内测试
 

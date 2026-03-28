@@ -121,13 +121,15 @@ include_directories(include)
 # SQLite / SQLCipher（元数据索引，docs/02-Core/03-Storage.md）
 # =========================
 # **不使用 vcpkg / 系统 sqlcipher 包**：`ZCHATIM_USE_SQLCIPHER=ON` 时**仅**接受树内 amalgamation。
-set(_zchatim_sqlcipher_vendor_dir "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/sqlcipher")
-set(_zchatim_sqlcipher_prebuilt "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/sqlcipher/prebuilt/windows-x64/amalgamation")
-if(WIN32
-   AND EXISTS "${_zchatim_sqlcipher_prebuilt}/sqlite3.c"
-   AND EXISTS "${_zchatim_sqlcipher_prebuilt}/sqlite3.h")
+# 优先同级目录下的 amalgamation；否则使用仓库内的 prebuilt（与 Windows 同一份源码，Linux/macOS 可直接编）。
+set(_zchatim_sqlcipher_root "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/sqlcipher")
+set(_zchatim_sqlcipher_prebuilt "${_zchatim_sqlcipher_root}/prebuilt/windows-x64/amalgamation")
+set(_zchatim_sqlcipher_vendor_dir "${_zchatim_sqlcipher_root}")
+if(EXISTS "${_zchatim_sqlcipher_root}/sqlite3.c" AND EXISTS "${_zchatim_sqlcipher_root}/sqlite3.h")
+    # default: thirdparty/sqlcipher/sqlite3.{c,h}
+elseif(EXISTS "${_zchatim_sqlcipher_prebuilt}/sqlite3.c" AND EXISTS "${_zchatim_sqlcipher_prebuilt}/sqlite3.h")
     set(_zchatim_sqlcipher_vendor_dir "${_zchatim_sqlcipher_prebuilt}")
-    message(STATUS "SQLCipher amalgamation dir: prebuilt/windows-x64/amalgamation")
+    message(STATUS "SQLCipher amalgamation: prebuilt/windows-x64/amalgamation (root pair not present)")
 endif()
 
 if(ZCHATIM_USE_SQLCIPHER)
@@ -135,10 +137,12 @@ if(ZCHATIM_USE_SQLCIPHER)
     if(NOT EXISTS "${_zchatim_sqlcipher_vendor_dir}/sqlite3.c"
        OR NOT EXISTS "${_zchatim_sqlcipher_vendor_dir}/sqlite3.h")
         message(FATAL_ERROR
-            "ZCHATIM_USE_SQLCIPHER=ON requires SQLCipher amalgamation in-tree (no vcpkg / no pkg-config sqlcipher):\n"
-            "  ${_zchatim_sqlcipher_vendor_dir}/sqlite3.c\n"
-            "  ${_zchatim_sqlcipher_vendor_dir}/sqlite3.h\n"
-            "See thirdparty/sqlcipher/README.md (optional: prebuilt/windows-x64/amalgamation/)\n"
+            "ZCHATIM_USE_SQLCIPHER=ON requires SQLCipher amalgamation in-tree (no vcpkg / no pkg-config sqlcipher).\n"
+            "Checked:\n"
+            "  ${_zchatim_sqlcipher_root}/sqlite3.c\n"
+            "  ${_zchatim_sqlcipher_prebuilt}/sqlite3.c\n"
+            "Fix: full git clone (see prebuilt/windows-x64/amalgamation/), or copy sqlite3.c/h per thirdparty/sqlcipher/README.md.\n"
+            "Linux: ZChatIM/build-jni-linux.sh copies from prebuilt to thirdparty/sqlcipher/ when needed.\n"
             "Or -DZCHATIM_USE_SQLCIPHER=OFF for plaintext metadata (dev only).\n"
         )
     endif()
@@ -170,12 +174,18 @@ if(ZCHATIM_USE_SQLCIPHER)
         )
     else()
         target_compile_options(zchatim_sqlcipher PRIVATE -include stdint.h)
+        # GCC 对 sqlite3.c 内 strlen 等产生 -Wstringop-overread 告警；属上游 amalgamation 与 LTO/内联合流，仅压制本目标
+        if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+            target_compile_options(zchatim_sqlcipher PRIVATE -Wno-stringop-overread)
+        endif()
     endif()
     target_link_libraries(zchatim_sqlcipher PUBLIC OpenSSL::SSL OpenSSL::Crypto)
     if(UNIX)
         find_package(Threads REQUIRED)
         target_link_libraries(zchatim_sqlcipher PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            # amalgamation 中 Unix VFS 使用 mremap / MREMAP_MAYMOVE；glibc 需 _GNU_SOURCE 才在 sys/mman.h 中声明
+            target_compile_definitions(zchatim_sqlcipher PRIVATE _GNU_SOURCE)
             target_link_libraries(zchatim_sqlcipher PRIVATE m)
         endif()
     endif()
@@ -305,6 +315,17 @@ if(ZCHATIM_BUILD_JNI)
             ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
         target_link_libraries(ZChatIMJNI PRIVATE ZChatIMCore)
+
+        # Linux/macOS：链入 .so/.dylib 的静态库须 -fPIC，否则 ld 报 R_X86_64_PC32 / recompile with -fPIC
+        if(UNIX)
+            set_target_properties(ZChatIMCore PROPERTIES POSITION_INDEPENDENT_CODE ON)
+            set_target_properties(${_zchatim_sqlite_link_target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        endif()
+
+        # JNINativeMethod 为 char*，字符串字面量触发 -Wwrite-strings；与 MSVC 行为对齐，仅压 JNI 目标告警
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(ZChatIMJNI PRIVATE -Wno-write-strings)
+        endif()
 
         set_target_properties(ZChatIMJNI PROPERTIES
             OUTPUT_NAME "ZChatIMJNI"

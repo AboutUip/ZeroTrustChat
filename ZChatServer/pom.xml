@@ -17,7 +17,7 @@
 
     <properties>
         <java.version>17</java.version>
-        <!-- JDK 24+ 追加 JVM 参数（见 profile jdk24-jvm-warnings）；Surefire / spring-boot:run 共用 -->
+        <!-- JDK 24+（含 Linux 上的 JDK 25）追加 JVM 参数；Maven 跑测试/run 时生效。纯 java -jar 须在环境变量中自行带上，见 native/linux-x64/README.md -->
         <jdk24.jvm.extra.args></jdk24.jvm.extra.args>
     </properties>
 

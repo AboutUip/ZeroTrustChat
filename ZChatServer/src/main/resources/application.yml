@@ -71,6 +71,7 @@ zchat:
     offline-queue-max-per-user: 256
     native:
       # 默认 ${user.dir}/target/...（ASCII），避免 Windows 上 java.io.tmpdir 含中文路径导致 C++ create_directories 失败
+      # Linux 勿复用 Windows 下已生成的目录：mm2_message_key.bin 在 Win 为 ZMK1(DPAPI)，在 Linux 会报错；见 native/linux-x64/README.md
       data-dir: ${ZCHAT_MM_DATA_DIR:${user.dir}/target/zchat-mm-data}
       index-dir: ${ZCHAT_MM_INDEX_DIR:${user.dir}/target/zchat-mm-index}
       # initialize() 失败且 C++ 侧需要口令时再填（或通过环境变量注入）

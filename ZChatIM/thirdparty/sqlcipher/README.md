@@ -6,11 +6,11 @@
 
 **默认**：与本 `README.md` **同级**的 **`sqlite3.c`**、**`sqlite3.h`**。
 
-**可选（Windows，便于与 OpenSSL 制品分开存放）**：若存在
+**可选（与根目录二选一）**：若根目录无 **`sqlite3.c` / `sqlite3.h`**，但存在
 
 **`prebuilt/windows-x64/amalgamation/sqlite3.c`** **与** **`sqlite3.h`**，
 
-CMake **优先**使用该目录（见 **`prebuilt/windows-x64/README.md`**）。
+CMake **会改用该目录**（与 Windows 同一份 amalgamation，**Linux / macOS 亦可编译**；见 **`prebuilt/windows-x64/README.md`**）。
 
 | 文件 | 说明 |
 |------|------|

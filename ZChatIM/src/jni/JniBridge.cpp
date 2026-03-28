@@ -8,6 +8,7 @@
 #include "Types.h"
 
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <limits>
