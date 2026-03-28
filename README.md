@@ -68,9 +68,11 @@ flowchart LR
 
 ```text
 ZerOS-Chat/
+├── CMakeLists.txt     ← 根 CMake 入口（VS 打开仓库根时用）
+├── CMakePresets.json  ← 聚合 ZChatIM 预设（需 CMake ≥ 3.24）
 ├── docs/              ← 产品规范（架构、业务、存储、JNI 契约）
 ├── ZChatIM/docs/      ← C++ 构建、实现跟踪、Scope
-├── ZChatIM/           ← C++：CMake · 源码 · jni/
+├── ZChatIM/           ← C++：CMake · CMakePresets.json · 源码 · jni/
 ├── Client/            ← 客户端：发布物约定 → Client/README.md
 │   └── Android/       ← ZChat Android 源码与构建 → Client/Android/README.md
 ├── LICENSE

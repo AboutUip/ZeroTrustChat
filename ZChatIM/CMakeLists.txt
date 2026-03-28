@@ -84,6 +84,18 @@ if(NOT TARGET OpenSSL::Crypto)
     )
 endif()
 
+# JAVA_HOME 兜底时按平台追加 jni.h 子目录（FindJNI 成功时自带正确路径）。
+macro(zchatim_jni_includes_from_java_home jdk_home)
+    set(JNI_INCLUDE_DIRS "${jdk_home}/include")
+    if(WIN32)
+        list(APPEND JNI_INCLUDE_DIRS "${jdk_home}/include/win32")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        list(APPEND JNI_INCLUDE_DIRS "${jdk_home}/include/linux")
+    elseif(APPLE)
+        list(APPEND JNI_INCLUDE_DIRS "${jdk_home}/include/darwin")
+    endif()
+endmacro()
+
 # C++ 标准配置
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -251,11 +263,8 @@ endif()
 if(ZCHATIM_BUILD_JNI)
     find_package(JNI QUIET)
     if(NOT JNI_FOUND AND DEFINED ENV{JAVA_HOME})
-        set(_zchatim_java_home $ENV{JAVA_HOME})
-        set(JNI_INCLUDE_DIRS
-            "${_zchatim_java_home}/include"
-            "${_zchatim_java_home}/include/win32"
-        )
+        file(TO_CMAKE_PATH "$ENV{JAVA_HOME}" _zchatim_jh)
+        zchatim_jni_includes_from_java_home("${_zchatim_jh}")
         set(JNI_FOUND TRUE)
     endif()
     if(JNI_FOUND)
@@ -268,22 +277,21 @@ endif()
 # JNI shared library (optional)
 # =========================
 if(ZCHATIM_BUILD_JNI)
-    # CMake 尝试查找 JNI。找不到时从 JAVA_HOME 兜底。
-    find_package(JNI QUIET)
+    # 与上一段一致：若仍未有 JNI 头（例如仅编 JNI 目标而 Core 未开 JNI 宏），再解析一次。
     if(NOT JNI_FOUND)
-        if(DEFINED ENV{JAVA_HOME})
-            set(JAVA_HOME $ENV{JAVA_HOME})
-            set(JNI_INCLUDE_DIRS
-                "${JAVA_HOME}/include"
-                "${JAVA_HOME}/include/win32"
-            )
-        else()
-            message(WARNING
-                "JNI not found (and JAVA_HOME is not set). ZChatIMJNI will be skipped. "
-                "Please install a JDK and/or set JAVA_HOME (e.g. $env:JAVA_HOME='C:\\Program Files\\Java\\jdk-xx') to build JNI."
-            )
-            set(ZCHATIM_BUILD_JNI OFF)
-        endif()
+        find_package(JNI QUIET)
+    endif()
+    if(NOT JNI_FOUND AND DEFINED ENV{JAVA_HOME})
+        file(TO_CMAKE_PATH "$ENV{JAVA_HOME}" _zchatim_jh2)
+        zchatim_jni_includes_from_java_home("${_zchatim_jh2}")
+        set(JNI_FOUND TRUE)
+    endif()
+    if(NOT JNI_FOUND)
+        message(WARNING
+            "JNI not found (and JAVA_HOME is not set). ZChatIMJNI will be skipped. "
+            "Set JAVA_HOME to a JDK (Windows/Linux/macOS) to build JNI."
+        )
+        set(ZCHATIM_BUILD_JNI OFF)
     endif()
 
     if(ZCHATIM_BUILD_JNI)
@@ -310,6 +318,11 @@ if(ZCHATIM_BUILD_JNI)
                     RUNTIME_OUTPUT_DIRECTORY_${_cfg} "${CMAKE_BINARY_DIR}/lib"
                 )
             endforeach()
+        else()
+            # Linux/macOS：统一输出到 build/lib，便于 java.library.path / zchat.native.dir
+            set_target_properties(ZChatIMJNI PROPERTIES
+                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+            )
         endif()
     endif()
 endif()
@@ -379,6 +392,13 @@ if(ZCHATIM_BUILD_EXE)
     message(STATUS "ZChatIM.exe -> ${CMAKE_BINARY_DIR}/bin (flat, MSVC multi-config)")
 endif()
 if(ZCHATIM_BUILD_JNI)
-    message(STATUS "ZChatIMJNI.dll -> ${CMAKE_BINARY_DIR}/lib (flat per-config on MSVC)")
+    if(WIN32)
+        set(_zchatim_jni_name "ZChatIMJNI.dll")
+    elseif(APPLE)
+        set(_zchatim_jni_name "libZChatIMJNI.dylib")
+    else()
+        set(_zchatim_jni_name "libZChatIMJNI.so")
+    endif()
+    message(STATUS "${_zchatim_jni_name} -> ${CMAKE_BINARY_DIR}/lib")
 endif()
 message(STATUS "===============================================")

@@ -11,7 +11,15 @@
       "hidden": true,
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
-      "binaryDir": "${sourceDir}/build"
+      "binaryDir": "${sourceDir}/build",
+      "vendor": {
+        "microsoft.com/VisualStudioSettings/CMake/1.0": {
+          "hostOS": ["Windows"],
+          "intelliSenseMode": "windows-msvc-x64",
+          "enableMicrosoftCodeAnalysis": false,
+          "enableClangTidyCodeAnalysis": false
+        }
+      }
     },
     {
       "name": "windows-exe-only",
@@ -39,6 +47,135 @@
       "cacheVariables": {
         "ZCHATIM_BUILD_MODE": "Both"
       }
+    },
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-linux",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-exe-only",
+      "displayName": "ZChatIM — Linux 控制台 EXE only",
+      "description": "ZChatIM 可执行文件，无 libZChatIMJNI.so。需 libssl-dev、树内 SQLCipher。",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "ZCHATIM_BUILD_MODE": "ExeOnly"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-jni-so-only",
+      "displayName": "ZChatIM — Linux JNI .so only",
+      "description": "生成 libZChatIMJNI.so（与 ZChatIMCore 静态归档）。请设置 JAVA_HOME。产物：build-linux/lib/",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "ZCHATIM_BUILD_MODE": "JniDllOnly"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-both",
+      "displayName": "ZChatIM — Linux EXE + JNI .so",
+      "description": "同时生成 ZChatIM 与 libZChatIMJNI.so。",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "ZCHATIM_BUILD_MODE": "Both"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "wsl-linux-base",
+      "hidden": true,
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-linux-wsl",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "vendor": {
+        "microsoft.com/VisualStudioSettings/CMake/1.0": {
+          "hostOS": ["Linux"],
+          "intelliSenseMode": "linux-gcc-x64"
+        }
+      }
+    },
+    {
+      "name": "wsl-linux-jni-so-only",
+      "displayName": "ZChatIM — Linux JNI .so (WSL)",
+      "description": "在 WSL 内生成 libZChatIMJNI.so（非 Windows 本机 ELF）。需 VS 的 Linux/WSL CMake 支持、WSL 中 g++、libssl-dev、JAVA_HOME、树内 SQLCipher。",
+      "inherits": "wsl-linux-base",
+      "cacheVariables": {
+        "ZCHATIM_BUILD_MODE": "JniDllOnly"
+      }
+    },
+    {
+      "name": "wsl-linux-both",
+      "displayName": "ZChatIM — Linux EXE + .so (WSL)",
+      "description": "在 WSL 内同时生成可执行文件与 libZChatIMJNI.so。",
+      "inherits": "wsl-linux-base",
+      "cacheVariables": {
+        "ZCHATIM_BUILD_MODE": "Both"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-exe-only-release",
+      "displayName": "Build console EXE (Release)",
+      "configurePreset": "windows-exe-only",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-jni-dll-only-release",
+      "displayName": "Build JNI DLL (Release)",
+      "configurePreset": "windows-jni-dll-only",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-both-release",
+      "displayName": "Build EXE + DLL (Release)",
+      "configurePreset": "windows-both",
+      "configuration": "Release"
+    },
+    {
+      "name": "linux-jni-so-only-release",
+      "displayName": "Build libZChatIMJNI.so (Release)",
+      "configurePreset": "linux-jni-so-only"
+    },
+    {
+      "name": "linux-both-release",
+      "displayName": "Build EXE + .so (Release)",
+      "configurePreset": "linux-both"
+    },
+    {
+      "name": "wsl-linux-jni-so-release",
+      "displayName": "Build libZChatIMJNI.so (WSL Release)",
+      "configurePreset": "wsl-linux-jni-so-only"
+    },
+    {
+      "name": "wsl-linux-both-release",
+      "displayName": "Build EXE + libZChatIMJNI.so (WSL Release)",
+      "configurePreset": "wsl-linux-both"
     }
   ]
 }
