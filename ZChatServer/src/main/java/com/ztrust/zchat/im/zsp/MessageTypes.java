@@ -50,6 +50,7 @@ public final class MessageTypes {
     public static final int USER_DISPLAY_NAME_GET = 0x8B;
     /** 读取用户资料（昵称+头像）：载荷为目标 userId(16)；应答见 02-ZSP-Protocol.md §6.9。 */
     public static final int USER_PROFILE_GET = 0x8C;
+
     /**
      * 注销当前账号（JNI {@code deleteAccount}）：载荷为 SHA-256(UTF-8 口令) 32 字节；应答 1 字节 1=成功。成功后网关关闭连接。
      */
@@ -82,4 +83,9 @@ public final class MessageTypes {
     public static final int CUSTOM = 0xFE;
 
     private MessageTypes() {}
+
 }
+
+
+
+

@@ -8,8 +8,16 @@ import java.util.List;
 
 public final class ZspFrameDecoder extends ByteToMessageDecoder {
 
+    /**
+     *
+     * out- 应将解码消息添加到列表中的列表
+     * @param ctx
+     * @param in
+     * @param out
+     */
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
+
         if (in.readableBytes() < ZspConstants.HEADER_LENGTH) {
             return;
         }
@@ -51,5 +59,8 @@ public final class ZspFrameDecoder extends ByteToMessageDecoder {
         byte[] tag = new byte[ZspConstants.AUTH_TAG_LENGTH];
         slice.readBytes(tag);
         out.add(new ZspFrame(header, meta, payload, tag));
+
+
+
     }
 }

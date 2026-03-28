@@ -407,6 +407,13 @@ public final class ZspMessageDispatcher {
         writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.USER_DISPLAY_NAME_GET, data));
     }
 
+    /**
+     * 获取用户信息
+     * @param ctx
+     * @param frame
+     * @param caller
+     * @param payload
+     */
     private void cleartextUserProfileGet(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller, byte[] payload) {
         Optional<byte[]> body = buildUserProfilePayload(caller, payload);
         if (body.isEmpty()) {

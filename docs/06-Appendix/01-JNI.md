@@ -44,7 +44,7 @@
 |------|---------------------------------------------|
 | 双会话同一 principal | `DestroySession` |
 | caller 有效且 principal 等于该 API 表中标定的 16B 入参 | `ListMessages` / `ListMessagesSinceTimestamp` / `ListMessagesSinceMessageId`（**`userId`**）；`DeleteMessage` / `RecallMessage`（**`senderId`**）；`StoreUserData` / `DeleteUserData`（**`userId`**）；`GetUserData`（**`userId`**，**例外见下**）；`SendFriendRequest`（**`fromUserId`**）；`RespondFriendRequest`（**`responderId`**）；`DeleteFriend` / `GetFriends`（**`userId`**）；`CreateGroup`（**`creatorId`**）；`LeaveGroup`（**`userId`**）；`ValidateMentionRequest` / `RecordMentionAtAllUsage`（**`senderId`**）；`MuteMember`（**`mutedBy`**）；`UnmuteMember`（**`unmutedBy`**）；`UpdateGroupName`（**`updaterId`**）；`RegisterDeviceSession` / `UpdateLastActive` / `GetDeviceSessions`（**`userId`**）；`GetUserStatus`（**`userId`**）；`DeleteAccount` / `IsAccountDeleted`（**`userId`**）；`UpdateFriendNote`（**`userId`**）；`EditMessage`（**`senderId`**）；**`ChangeLocalPassword`（`userId`）** |
-| **`GetUserData` 例外** | `type == MM1_USER_KV_TYPE_AVATAR_V1`（`AVT1`）或 `type == MM1_USER_KV_TYPE_DISPLAY_NAME_V1`（`NMN1`）时：除本人外，**principal 与 `userId` 为已接受好友**亦可读取（`FriendManager::GetFriends` 列表匹配）；其余 `type` 仍须 `principal == userId` |
+| **`GetUserData` 例外** | `type == MM1_USER_KV_TYPE_AVATAR_V1`（`AVT1`）或 `type == MM1_USER_KV_TYPE_DISPLAY_NAME_V1`（`NMN1`）时：**任意已登录用户均可读取**（用于添加好友搜索功能）；其余 `type` 仍须 `principal == userId` |
 | **仅 caller**（不比对 principal 与 `imSessionId` / 消息 id） | `StoreMessage`, `RetrieveMessage`, `MarkMessageRead`, `GetUnreadSessionMessageIds`, `GetSessionMessages`, `GetSessionStatus`, `TouchSession`, `CleanupExpiredSessions`, `CleanupSessionMessages`, `InviteMember`, `RemoveMember`, `GetGroupMembers`, `UpdateGroupKey`, `IsMuted`, `GetGroupName`, `StoreFileChunk`, `GetFileChunk`, `CompleteFile`, `CancelFile`, `StoreTransferResumeChunkIndex`, `GetTransferResumeChunkIndex`, `CleanupTransferResumeChunkIndex`, `GetMessageReplyRelation`, `GetMessageEditState`, `CleanupExpiredDeviceSessions`, `CleanupExpiredData`, `OptimizeStorage`, `GetStorageStatus`, `GetMessageCount`, `GetFileCount`, `GenerateMasterKey`, `RefreshSessionKey`, `EmergencyWipe`, `GetStatus`, `RotateKeys`, `ConfigurePinnedPublicKeyHashes`, `IsClientBanned`, `ClearBan`, **`RtcStartCall`**, **`RtcAcceptCall`**, **`RtcRejectCall`**, **`RtcEndCall`**, **`RtcGetCallState`**, **`RtcGetCallKind`** |
 | **`caller` 可空**：空则跳过 `TryBindCaller`；非空则须有效 | `VerifyPinnedServerCertificate`, `RecordFailure` |
 | 桥接层**不**调用 `TryBindCaller`；**`MessageReplyManager`** 内 **`TryGetSessionUserId` + `senderId`** | `StoreMessageReplyRelation` |
@@ -112,7 +112,7 @@
 | C++ | 逻辑（camelCase） | 输入 | 输出（C++） | 说明 |
 |-----|-------------------|------|-------------|------|
 | `StoreUserData` | storeUserData | caller, userId, type(int32), data | `bool` | **MM2 已初始化**时 **`mm1::UserDataManager` → `MM2::StoreMm1UserDataBlob` → SQLCipher `mm1_user_kv`** 持久化（与 LPH1 相同）；userId＝principal；**`type==AVT1`** 时 `data.size()≤MM1_USER_AVATAR_MAX_BYTES`；**`type==NMN1`** 时 `data.size()≤MM1_USER_DISPLAY_NAME_MAX_BYTES`（否则 false）；Storage 第2.6节 |
-| `GetUserData` | getUserData | caller, userId, type(int32) | `bytes`（空=null） | 无行或无权为空向量；**`type==AVT1` 或 `type==NMN1`** 时见上文 principal 矩阵「`GetUserData` 例外」 |
+| `GetUserData` | getUserData | caller, userId, type(int32) | `bytes`（空=null） | 无行为空向量；**`type==AVT1` 或 `type==NMN1`** 时允许任意已登录用户查询（用于添加好友搜索）；其余 `type` 须 `principal == userId` |
 | `DeleteUserData` | deleteUserData | caller, userId, type(int32) | `bool` | userId＝principal；无行 false |
 
 ## 四、好友模块

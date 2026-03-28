@@ -809,9 +809,11 @@ namespace ZChatIM::jni {
             return {};
         }
         if (type == MM1_USER_KV_TYPE_AVATAR_V1 || type == MM1_USER_KV_TYPE_DISPLAY_NAME_V1) {
-            if (!IsSelfOrAcceptedFriend(m_mm1, principal, userId)) {
-                return {};
-            }
+               //现在注释掉判断是否为好友
+               //原因：在搜索未添加好友的用户的时候我们需要查询出用户的名称和头像，为了接口的复用，取消认证
+//            if (!IsSelfOrAcceptedFriend(m_mm1, principal, userId)) {
+//                return {};
+//            }
         } else {
             if (!PrincipalMatches(principal, userId)) {
                 return {};
