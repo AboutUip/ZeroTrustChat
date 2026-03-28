@@ -105,6 +105,15 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 | 0x81 | AUTH | 认证 |
 | 0x82 | LOGOUT | 登出 |
 | 0x83 | SYNC | 消息同步 |
+| 0x84 | LOCAL_REGISTER | 本地口令开户（载荷见 `MessageTypes` / SpringBoot；**未登录**通道） |
+| 0x85 | LOCAL_PASSWORD_AUTH | 本地口令登录（成功载荷为 imSessionId；**未登录**通道） |
+| 0x86 | USER_AVATAR_SET | 设置**本人**头像（**须已认证**；载荷与应答见 **§6.8**） |
+| 0x87 | USER_AVATAR_GET | 读取用户头像（**须已认证**；载荷与应答见 **§6.8**） |
+| 0x88 | USER_AVATAR_DELETE | 删除**本人**头像（**须已认证**；应答见 **§6.8**） |
+| 0x8A | USER_DISPLAY_NAME_SET | 设置**本人**展示昵称 UTF-8（**须已认证**；载荷与应答见 **§6.9**） |
+| 0x8B | USER_DISPLAY_NAME_GET | 读取用户展示昵称（**须已认证**；载荷与应答见 **§6.9**） |
+| 0x8C | USER_PROFILE_GET | 一次读取某用户的昵称 + 头像（**须已认证**；载荷与应答见 **§6.9**） |
+| 0x8D | ACCOUNT_DELETE | 注销当前账号（**须已认证**；载荷与应答见 **§6.10**） |
 | 0xFE | CUSTOM | 自定义消息 |
 
 ### 5.1 与 第7.2节 TLV「同字节不同义」（速查）
@@ -212,6 +221,59 @@ ZSP (Zero Secure Protocol) 是 ZerOS-System 安全即时通讯系统的自定义
 │               │   (变长)     │    (2)      │   (变长)     │
 └───────────────┴─────────────┴─────────────┴─────────────┘
 ```
+
+### 6.8 用户头像 USER_AVATAR_*（0x86–0x88）
+
+**前置**：连接须已完成 **`AUTH`（0x81）** 或 **`LOCAL_PASSWORD_AUTH`（0x85）**，网关已绑定 `callerSessionId` 与认证用户（实现上对应通道属性中的会话与用户 id）。**未认证**时服务端关闭连接，不处理本节帧。
+
+**存储键**：原生 **`mm1_user_kv`**，`type = MM1_USER_KV_TYPE_AVATAR_V1`（`0x41565431`，ASCII `AVT1`），与 `Types.h` / `ZspConstants.MM1_USER_KV_TYPE_AVATAR_V1` 一致。**单 blob 最大 `MM1_USER_AVATAR_MAX_BYTES`（65535）**，与 ZSP **Header.Length** 所限制的 Payload 上限一致。
+
+**权限**（与 JNI `GetUserData` / `StoreUserData` / `DeleteUserData` 一致，见 [`06-Appendix/01-JNI.md`](../06-Appendix/01-JNI.md) **用户数据模块** 与 **principal 矩阵**）：
+
+- **SET（0x86）/ DELETE（0x88）**：仅操作**当前登录用户**的头像。
+- **GET（0x87）**：可读取**本人**或**已接受好友**的头像；否则应答载荷为空。
+
+| MessageType | 请求 Payload | 应答 Payload |
+|-------------|--------------|--------------|
+| **0x86 SET** | 原始图像字节（JPEG/PNG/WebP 等），长度 ≤ 65535；允许 0 字节（实现依赖视为清空或失败以 native 为准） | 1 字节：`1`＝成功，`0`＝失败 |
+| **0x87 GET** | **targetUserId（16 字节）** | 图像字节；无数据或无权时**长度 0** |
+| **0x88 DELETE** | 无要求（可为空） | 1 字节：`1`＝成功，`0`＝失败 |
+
+### 6.9 展示昵称与资料 USER_DISPLAY_NAME_* / USER_PROFILE_GET（0x8A–0x8C）
+
+**前置**：与 **§6.8** 相同（**已认证**连接；未认证时服务端关闭连接）。
+
+**存储键**：`mm1_user_kv`，`type = MM1_USER_KV_TYPE_DISPLAY_NAME_V1`（`0x4E4D4E31`，ASCII `NMN1`），与 `Types.h` / `ZspConstants.MM1_USER_KV_TYPE_DISPLAY_NAME_V1` 一致。**单条最大 `MM1_USER_DISPLAY_NAME_MAX_BYTES`（256）**。
+
+**权限**（与 JNI `GetUserData` / `StoreUserData` 一致，见 [`06-Appendix/01-JNI.md`](../06-Appendix/01-JNI.md) **principal 矩阵**）：
+
+- **SET（0x8A）**：仅**当前登录用户**的昵称；载荷为 UTF-8 字节，长度 ≤256；空载荷表示清空。
+- **GET（0x8B）**：请求 **targetUserId（16 字节）**；应答为 UTF-8 字节（无数据或无权时长度 0）。读取权限与头像相同（本人或已接受好友）。
+- **PROFILE_GET（0x8C）**：请求 **targetUserId（16 字节）**；应答为 **`nickLen(u16 BE) ‖ nick ‖ avatarLen(u16 BE) ‖ avatar`**。服务端在总长度受单帧上限约束时可能对昵称或头像做截断（实现见 `ZspMessageDispatcher#cleartextUserProfileGet`）。
+
+| MessageType | 请求 Payload | 应答 Payload |
+|-------------|--------------|----------------|
+| **0x8A SET** | UTF-8 昵称字节，长度 ≤256 | 1 字节：`1`＝成功，`0`＝失败 |
+| **0x8B GET** | **targetUserId（16 字节）** | UTF-8 昵称；无数据或无权时**长度 0** |
+| **0x8C PROFILE_GET** | **targetUserId（16 字节）** | `nickLen(2)‖nick‖avatarLen(2)‖avatar`（长度均为大端无符号 16 位） |
+
+**持久化**：NMN1 / AVT1 经 JNI `storeUserData` / `getUserData` 落在 **MM2** 的 **`mm1_user_kv`**（SQLCipher，见 [`03-Storage.md`](../02-Core/03-Storage.md)）。**产品约定（当前 Android 客户端）**：用户未填写展示名时，**注册**与**资料保存**以 **32 字符 hex 账户 ID**（UTF-8）写入 NMN1，与服务端持久化一致；**旧用户**若尚无 NMN1 行，界面仍展示账户 ID（读不到服务端昵称时的回退）。网关对 **0x8A** 的 **0 字节**载荷仍表示清空昵称（native 语义不变），当前 App 默认路径不依赖清空。
+
+**客户端会话**：须在**同一 TCP 连接**上先完成 `LOCAL_PASSWORD_AUTH`（0x85），后续业务帧**递增** `Header.Sequence`，与网关防重放一致（见 [`03-SpringBoot.md`](../03-Business/01-SpringBoot.md)）。
+
+### 6.10 注销账号 ACCOUNT_DELETE（0x8D）
+
+**前置**：**已认证**连接（`LOCAL_PASSWORD_AUTH` 或 `AUTH`）。
+
+**语义**：JNI `deleteAccount`，在 `mm1_user_kv` 写入 **ACD1** 注销墓碑（见 [`06-Appendix/01-JNI.md`](../06-Appendix/01-JNI.md) **DeleteAccount**）。
+
+**载荷**：**32 字节**，为 **SHA-256(UTF-8 口令)**；作为 `reauthToken` 与 `secondConfirmToken` **各一份**传入 native（与 `AccountDeleteManager` 双确认长度 ≥16 一致）。
+
+| MessageType | 请求 Payload | 应答 Payload |
+|-------------|--------------|----------------|
+| **0x8D DELETE** | **32 字节** SHA-256 摘要 | 1 字节：`1`＝成功，`0`＝失败 |
+
+**成功时**：网关写出应答后**关闭连接**并销毁 caller 会话（与 `LOGOUT` 清理路径一致）。
 
 ---
 
@@ -321,7 +383,7 @@ AEAD 加密输出，包含加密数据完整性认证。
 | 心跳间隔 | 30 秒 |
 | 心跳超时 | 90 秒 |
 
-**与 JNI / 可信区**：网关在不可信区完成 ZSP 编解码后，经 JNI 将 **opaque 载荷**交给 **MM1/MM2**；详见 **`docs/03-Business/01-SpringBoot.md`**、**`docs/06-Appendix/01-JNI.md`**。
+**与 JNI / 可信区**：网关在不可信区完成 **ZSP 入站解码**（`ZspFrame`）与 **出站字节序列化**（`ZspFrameWireEncoder` → `ByteBuf`），经 JNI 将 **opaque 载荷**交给 **MM1/MM2**；详见 **`docs/03-Business/01-SpringBoot.md`** §3.1 / §4、**`docs/06-Appendix/01-JNI.md`**。
 
 ---
 

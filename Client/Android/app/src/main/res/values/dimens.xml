@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="main_content_padding_horizontal">16dp</dimen>
+    <dimen name="main_content_padding_top">4dp</dimen>
+    <dimen name="main_content_padding_bottom">12dp</dimen>
+    <dimen name="bottom_nav_min_height">44dp</dimen>
+    <dimen name="bottom_nav_icon_size">18dp</dimen>
+    <dimen name="profile_avatar_size">72dp</dimen>
+    <dimen name="profile_avatar_edit_size">120dp</dimen>
+    <dimen name="contact_row_avatar_size">48dp</dimen>
+    <dimen name="friend_detail_avatar_size">96dp</dimen>
+    <dimen name="chat_bubble_avatar_size">40dp</dimen>
+    <dimen name="chat_bubble_max_width">280dp</dimen>
+    <dimen name="chat_emoji_panel_height">220dp</dimen>
+</resources>

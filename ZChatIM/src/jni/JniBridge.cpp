@@ -1,6 +1,7 @@
 #include "jni/JniBridge.h"
 
 #include "common/Memory.h"
+#include "mm1/managers/FriendManager.h"
 #include "mm1/MM1.h"
 #include "mm1/managers/RtcCallSessionManager.h"
 #include "mm2/MM2.h"
@@ -23,6 +24,27 @@ namespace ZChatIM::jni {
                 return false;
             }
             return common::Memory::ConstantTimeCompare(principal.data(), userId.data(), USER_ID_SIZE);
+        }
+
+        bool IsSelfOrAcceptedFriend(
+            mm1::MM1&                  mm1,
+            const std::vector<uint8_t>& principal,
+            const std::vector<uint8_t>& peer)
+        {
+            if (principal.size() != USER_ID_SIZE || peer.size() != USER_ID_SIZE) {
+                return false;
+            }
+            if (PrincipalMatches(principal, peer)) {
+                return true;
+            }
+            const auto friends = mm1.GetFriendManager().GetFriends(principal);
+            for (const auto& f : friends) {
+                if (f.size() == USER_ID_SIZE
+                    && common::Memory::ConstantTimeCompare(f.data(), peer.data(), USER_ID_SIZE)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         bool TryBindCaller(mm1::MM1& mm1, const std::vector<uint8_t>& callerSessionId, std::vector<uint8_t>& outPrincipal)
@@ -578,9 +600,9 @@ namespace ZChatIM::jni {
         if (!TryBindCaller(m_mm1, callerSessionId, principal)) {
             return {};
         }
-        if (!PrincipalMatches(principal, userId)) {
-            return {};
-        }
+        (void)principal;
+        // ZSP SYNC / 网关：第二参数为 **IM sessionId**（16B），与 MM2::ListMessagesSinceMessageId 一致；
+        // 不可与 PrincipalMatches(principal, …)（误把其当作 userId）混用，否则增量同步永远返回空。
         return m_mm2.GetMessageQueryManager().ListMessagesSinceMessageId(userId, lastMsgId, count);
     }
 
@@ -759,6 +781,16 @@ namespace ZChatIM::jni {
         if (!PrincipalMatches(principal, userId)) {
             return false;
         }
+        if (type == MM1_USER_KV_TYPE_AVATAR_V1) {
+            if (data.size() > MM1_USER_AVATAR_MAX_BYTES) {
+                return false;
+            }
+        }
+        if (type == MM1_USER_KV_TYPE_DISPLAY_NAME_V1) {
+            if (data.size() > MM1_USER_DISPLAY_NAME_MAX_BYTES) {
+                return false;
+            }
+        }
         return m_mm1.GetUserDataManager().StoreUserData(userId, type, data);
     }
 
@@ -775,8 +807,14 @@ namespace ZChatIM::jni {
         if (!TryBindCaller(m_mm1, callerSessionId, principal)) {
             return {};
         }
-        if (!PrincipalMatches(principal, userId)) {
-            return {};
+        if (type == MM1_USER_KV_TYPE_AVATAR_V1 || type == MM1_USER_KV_TYPE_DISPLAY_NAME_V1) {
+            if (!IsSelfOrAcceptedFriend(m_mm1, principal, userId)) {
+                return {};
+            }
+        } else {
+            if (!PrincipalMatches(principal, userId)) {
+                return {};
+            }
         }
         return m_mm1.GetUserDataManager().GetUserData(userId, type);
     }
@@ -818,7 +856,15 @@ namespace ZChatIM::jni {
         if (!PrincipalMatches(principal, fromUserId)) {
             return {};
         }
-        return m_mm1.GetFriendManager().SendFriendRequest(fromUserId, toUserId, timestampSeconds, signatureEd25519);
+        mm1::SendFriendRequestResult r =
+            m_mm1.GetFriendManager().SendFriendRequest(fromUserId, toUserId, timestampSeconds, signatureEd25519);
+        if (r.requestId.size() != MESSAGE_ID_SIZE) {
+            return {};
+        }
+        std::vector<uint8_t> out(17);
+        std::memcpy(out.data(), r.requestId.data(), MESSAGE_ID_SIZE);
+        out[16] = r.duplicatePending ? static_cast<uint8_t>(1) : static_cast<uint8_t>(0);
+        return out;
     }
 
     bool JniBridge::RespondFriendRequest(
@@ -885,6 +931,24 @@ namespace ZChatIM::jni {
             return {};
         }
         return m_mm1.GetFriendManager().GetFriends(userId);
+    }
+
+    std::vector<std::vector<uint8_t>> JniBridge::ListPendingFriendRequests(
+        const std::vector<uint8_t>& callerSessionId,
+        const std::vector<uint8_t>& userId)
+    {
+        const std::lock_guard<std::recursive_mutex> lk(m_apiRecursiveMutex);
+        if (!m_initialized.load(std::memory_order_relaxed)) {
+            return {};
+        }
+        std::vector<uint8_t> principal;
+        if (!TryBindCaller(m_mm1, callerSessionId, principal)) {
+            return {};
+        }
+        if (!PrincipalMatches(principal, userId)) {
+            return {};
+        }
+        return m_mm1.GetFriendManager().ListPendingIncomingFriendRequests(userId);
     }
 
     std::vector<uint8_t> JniBridge::CreateGroup(

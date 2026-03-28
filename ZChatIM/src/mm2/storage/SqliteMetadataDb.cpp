@@ -378,7 +378,7 @@ namespace ZChatIM::mm2 {
             "  complete_sha256 BLOB,\n"
             "  status INTEGER NOT NULL DEFAULT 0\n"
             ");\n"
-            // MM1/JNI UserData：`MM2::StoreMm1UserDataBlob` / `SqliteMetadataDb::UpsertMm1UserKvBlob`
+            // MM1/JNI UserData（含头像 AVT1、本地口令 LPH1 等）：`MM2::StoreMm1UserDataBlob` / `UpsertMm1UserKvBlob`
             "CREATE TABLE IF NOT EXISTS mm1_user_kv (\n"
             "  user_id BLOB NOT NULL,\n"
             "  type INTEGER NOT NULL,\n"
@@ -1593,6 +1593,41 @@ namespace ZChatIM::mm2 {
         return true;
     }
 
+    bool SqliteMetadataDb::FindPendingFriendRequestFromTo(
+        const std::vector<uint8_t>& fromUserId,
+        const std::vector<uint8_t>& toUserId,
+        std::vector<uint8_t>&       outRequestId)
+    {
+        if (!IsOpen()) {
+            impl_->lastError = "database not open";
+            return false;
+        }
+        if (!ExpectUserIdBlob(fromUserId, impl_->lastError) || !ExpectUserIdBlob(toUserId, impl_->lastError)) {
+            return false;
+        }
+        outRequestId.clear();
+        static const char sql[] =
+            "SELECT request_id FROM friend_requests WHERE from_user = ? AND to_user = ? AND status = 0 LIMIT 1;";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        sqlite3_bind_blob(stmt, 1, fromUserId.data(), static_cast<int>(fromUserId.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_blob(stmt, 2, toUserId.data(), static_cast<int>(toUserId.size()), SQLITE_TRANSIENT);
+        const int step = sqlite3_step(stmt);
+        if (step == SQLITE_ROW) {
+            const unsigned char* blob = static_cast<const unsigned char*>(sqlite3_column_blob(stmt, 0));
+            const int            blen = sqlite3_column_bytes(stmt, 0);
+            if (blob != nullptr && blen == static_cast<int>(ZChatIM::MESSAGE_ID_SIZE)) {
+                outRequestId.assign(blob, blob + blen);
+            }
+        }
+        sqlite3_finalize(stmt);
+        impl_->lastError.clear();
+        return true;
+    }
+
     bool SqliteMetadataDb::UpdateFriendRequestStatus(
         const std::vector<uint8_t>& requestId,
         int32_t                     status,
@@ -1737,6 +1772,70 @@ namespace ZChatIM::mm2 {
         outToUser.assign(static_cast<const uint8_t*>(f1), static_cast<const uint8_t*>(f1) + n1);
         outStatus = sqlite3_column_int(stmt, 2);
         sqlite3_finalize(stmt);
+        impl_->lastError.clear();
+        return true;
+    }
+
+    bool SqliteMetadataDb::ListPendingFriendRequestsForToUser(
+        const std::vector<uint8_t>&        toUserId,
+        std::vector<std::vector<uint8_t>>& outRows)
+    {
+        outRows.clear();
+        if (!IsOpen()) {
+            impl_->lastError = "database not open";
+            return false;
+        }
+        if (!ExpectUserIdBlob(toUserId, impl_->lastError)) {
+            return false;
+        }
+        static const char sql[] =
+            "SELECT request_id, from_user, created_s FROM friend_requests WHERE to_user = ? AND status = 0 "
+            "ORDER BY created_s DESC;";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            return false;
+        }
+        sqlite3_bind_blob(stmt, 1, toUserId.data(), static_cast<int>(toUserId.size()), SQLITE_TRANSIENT);
+        int step = sqlite3_step(stmt);
+        while (step == SQLITE_ROW) {
+            if (sqlite3_column_type(stmt, 0) != SQLITE_BLOB || sqlite3_column_type(stmt, 1) != SQLITE_BLOB) {
+                sqlite3_finalize(stmt);
+                impl_->lastError = "ListPendingFriendRequestsForToUser: column not BLOB";
+                outRows.clear();
+                return false;
+            }
+            const void* ridPtr = sqlite3_column_blob(stmt, 0);
+            const int   ridLen = sqlite3_column_bytes(stmt, 0);
+            const void* fromPtr = sqlite3_column_blob(stmt, 1);
+            const int   fromLen = sqlite3_column_bytes(stmt, 1);
+            if (ridLen != static_cast<int>(MESSAGE_ID_SIZE) || fromLen != static_cast<int>(USER_ID_SIZE)
+                || ridPtr == nullptr || fromPtr == nullptr) {
+                sqlite3_finalize(stmt);
+                impl_->lastError = "ListPendingFriendRequestsForToUser: id length invalid";
+                outRows.clear();
+                return false;
+            }
+            const sqlite3_int64 createdS = sqlite3_column_int64(stmt, 2);
+            std::vector<uint8_t> row;
+            row.resize(MESSAGE_ID_SIZE + USER_ID_SIZE + 8);
+            std::memcpy(row.data(), ridPtr, MESSAGE_ID_SIZE);
+            std::memcpy(row.data() + MESSAGE_ID_SIZE, fromPtr, USER_ID_SIZE);
+            const uint64_t cs = static_cast<uint64_t>(createdS);
+            const size_t     base = MESSAGE_ID_SIZE + USER_ID_SIZE;
+            for (int i = 0; i < 8; ++i) {
+                row[base + static_cast<size_t>(i)] =
+                    static_cast<uint8_t>((cs >> static_cast<unsigned>(56 - i * 8)) & 0xFFU);
+            }
+            outRows.push_back(std::move(row));
+            step = sqlite3_step(stmt);
+        }
+        sqlite3_finalize(stmt);
+        if (step != SQLITE_DONE) {
+            impl_->lastError = sqlite3_errmsg(impl_->db);
+            outRows.clear();
+            return false;
+        }
         impl_->lastError.clear();
         return true;
     }

@@ -48,6 +48,8 @@ zchat:
   zsp:
     enabled: true
     diagnostic-logging: false
+    # TCP 接入、帧拒绝码、管道异常摘要（默认 true，便于真机/局域网排障；生产可 false）
+    log-inbound-events: true
     port: 8848
     boss-threads: 1
     worker-threads: 0
@@ -62,6 +64,7 @@ zchat:
     # HMAC 模式下必填；建议用环境变量或密钥管理注入
     frame-integrity-secret: ""
     verify-inbound-auth-tag: false
+    # Meta 时间与服务器偏差（分钟）；≤0 关闭时间戳窗口（仍校验 seq/nonce）。与 02-Auth / 防重放文档一致。
     replay-timestamp-window-minutes: 5
     reject-compressed-payload: true
     offline-queue-enabled: true

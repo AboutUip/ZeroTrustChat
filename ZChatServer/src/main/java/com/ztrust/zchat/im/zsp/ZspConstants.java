@@ -19,5 +19,17 @@ public final class ZspConstants {
     public static final int ED25519_SIGNATURE_SIZE = 64;
     public static final int SHA256_SIZE = 32;
 
+    /** mm1_user_kv，与 {@code Types.h} 中 MM1_USER_KV_TYPE_AVATAR_V1 一致（ASCII "AVT1"）。 */
+    public static final int MM1_USER_KV_TYPE_AVATAR_V1 = 0x41565431;
+    /** 头像 blob 最大字节数（与 ZSP 单帧载荷上限一致）。 */
+    public static final int MM1_USER_AVATAR_MAX_BYTES = 65535;
+
+    /** mm1_user_kv，与 {@code Types.h} 中 MM1_USER_KV_TYPE_DISPLAY_NAME_V1 一致（ASCII "NMN1"）。 */
+    public static final int MM1_USER_KV_TYPE_DISPLAY_NAME_V1 = 0x4E4D4E31;
+    /** UTF-8 昵称最大字节数。 */
+    public static final int MM1_USER_DISPLAY_NAME_MAX_BYTES = 256;
+    /** mm1_user_kv，Ed25519 身份公钥（ASCII "EDJ1"），与 FriendVerificationManager 一致。 */
+    public static final int MM1_USER_KV_TYPE_ED25519_PUBKEY_V1 = 0x45444A31;
+
     private ZspConstants() {}
 }

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="iconTitle">
+  <title id="iconTitle">Secure chat — shield and messages</title>
+  <defs>
+    <linearGradient id="appBg" x1="64" y1="48" x2="448" y2="464" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6B8AFF"/>
+      <stop offset="0.5" stop-color="#335CFF"/>
+      <stop offset="1" stop-color="#1A2F7A"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded square (maskable / adaptive icon safe area) -->
+  <rect width="512" height="512" rx="112" ry="112" fill="url(#appBg)"/>
+  <!-- Background chat bubble (conversation context) -->
+  <path
+    fill="#FFFFFF"
+    fill-opacity="0.14"
+    d="M328 108c52 0 92 42 92 92v52c0 52-40 92-92 92h-40l-36 36v-36h-12c-52 0-92-40-92-92v-52c0-52 40-92 92-92h180z"/>
+  <!-- Foreground speech bubble -->
+  <path
+    fill="#FFFFFF"
+    fill-opacity="0.22"
+    d="M108 168c0-44 36-80 80-80h152c44 0 80 36 80 80v108c0 44-36 80-80 80H200l-56 56v-56h-12c-44 0-80-36-80-80V168z"/>
+  <!-- Shield: trusted / secure -->
+  <path
+    fill="#F8FAFF"
+    d="M256 132 L372 188 V300
+       C372 356 320 404 256 428
+       C192 404 140 356 140 300
+       V188 L256 132z"/>
+  <!-- Message lines inside shield (chat, protected) -->
+  <rect x="188" y="224" width="136" height="22" rx="11" fill="#335CFF"/>
+  <rect x="188" y="262" width="136" height="22" rx="11" fill="#335CFF"/>
+  <rect x="188" y="300" width="88" height="22" rx="11" fill="#335CFF"/>
+</svg>

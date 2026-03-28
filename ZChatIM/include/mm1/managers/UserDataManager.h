@@ -6,7 +6,9 @@
 
 namespace ZChatIM {
     namespace mm1 {
-        // mm1_user_kv when MM2 inited; else in-proc (tests).
+        // MM2 已初始化时：任意 type（含 Types.h 的 MM1_USER_KV_TYPE_AVATAR_V1 头像）均经
+        // MM2::StoreMm1UserDataBlob / GetMm1UserDataBlob / DeleteMm1UserDataBlob 落库 mm1_user_kv。
+        // 未初始化时：进程内 map（测试）。
         class UserDataManager {
         public:
             UserDataManager();

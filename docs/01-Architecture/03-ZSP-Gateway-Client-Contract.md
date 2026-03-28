@@ -13,6 +13,12 @@
 | `userId` / `imSessionId` / `messageId` 等长度 | 以 [`06-Appendix/01-JNI.md`](../06-Appendix/01-JNI.md) 文首表为准（**16 字节**） |
 | 与 `AUTHORITY.md` 冲突时 | 以 [`AUTHORITY.md`](../AUTHORITY.md) 为准 |
 
+### 1.1 `ZChatServer` 实现对齐（线格式不变）
+
+- **入站**：`ZspFrameDecoder`（`ByteToMessageDecoder`）将 TCP 字节解析为 `ZspFrame`。
+- **出站**：`ZspFrame` 经 `com.ztrust.zchat.im.zsp.ZspFrameWireEncoder#toByteBuf(ByteBufAllocator, ZspFrame)` 序列化为 `io.netty.buffer.ByteBuf` 后，由 `ChannelHandlerContext#writeAndFlush(Object)` 写出；**管道内不向 `NioSocketChannel` 传递 `ZspFrame` 出站对象**（无 `MessageToByteEncoder<ZspFrame>`）。
+- **调度**：`com.ztrust.zchat.im.zsp.server.ZspMessageDispatcher`；离线补发见 `ZspOfflineMessageQueue`（同出站编码路径）。
+
 ---
 
 ## 二、字节序与标识符

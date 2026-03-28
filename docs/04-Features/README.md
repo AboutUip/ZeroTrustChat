@@ -9,6 +9,7 @@
 | [04-Retry.md](04-Retry.md) | 重传 |
 | [09-MessageEdit.md](09-MessageEdit.md) | 编辑 |
 | [10-MessageReply.md](10-MessageReply.md) | 回复 |
+| [14-Android-Client-ZChat.md](14-Android-Client-ZChat.md) | Android 参考客户端（ZChat）：同步、语音信令、限制 |
 | [05-FriendVerify.md](05-FriendVerify.md) | 好友验证 |
 | [11-GroupMute.md](11-GroupMute.md) | 群禁言 |
 | [12-Mention.md](12-Mention.md) | 提及 |

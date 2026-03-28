@@ -40,7 +40,7 @@ namespace ZChatIM
             std::string GetDataDirUtf8() const;
             std::string GetIndexDirUtf8() const;
 
-            // mm1_user_kv; after Initialize; data <= 16MiB
+            // mm1_user_kv（SQLCipher）；Initialize 之后；data <= 16MiB。type 含 LPH1/LRC1/AVT1 等，无白名单。
             bool StoreMm1UserDataBlob(const std::vector<uint8_t>& userId, int32_t type, const std::vector<uint8_t>& data);
             bool GetMm1UserDataBlob(const std::vector<uint8_t>& userId, int32_t type, std::vector<uint8_t>& outData);
             bool DeleteMm1UserDataBlob(const std::vector<uint8_t>& userId, int32_t type);
@@ -124,6 +124,11 @@ namespace ZChatIM
                 const std::vector<uint8_t>& signatureEd25519,
                 std::vector<uint8_t>& outRequestId);
 
+            bool FindPendingOutgoingFriendRequestId(
+                const std::vector<uint8_t>& fromUserId,
+                const std::vector<uint8_t>& toUserId,
+                std::vector<uint8_t>&       outRequestId);
+
             bool UpdateFriendRequestStatus(
                 const std::vector<uint8_t>& requestId,
                 bool accept,
@@ -140,6 +145,9 @@ namespace ZChatIM
                 std::vector<uint8_t>&       outFromUser,
                 std::vector<uint8_t>&       outToUser,
                 int32_t&                    outStatus);
+            bool ListPendingFriendRequestsForMm1(
+                const std::vector<uint8_t>&        userId,
+                std::vector<std::vector<uint8_t>>& outRows);
             bool ListAcceptedFriendUserIdsForMm1(
                 const std::vector<uint8_t>& userId,
                 std::vector<std::vector<uint8_t>>& outFriends);

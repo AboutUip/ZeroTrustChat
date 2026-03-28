@@ -128,6 +128,7 @@ namespace ZChatIM::jni {
     ZCHATIM_JNI_FWD6(bool, RespondFriendRequest, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, requestId, bool, accept, const std::vector<uint8_t>&, responderId, uint64_t, timestampSeconds, const std::vector<uint8_t>&, signatureEd25519)
     ZCHATIM_JNI_FWD5(bool, DeleteFriend, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, userId, const std::vector<uint8_t>&, friendId, uint64_t, timestampSeconds, const std::vector<uint8_t>&, signatureEd25519)
     ZCHATIM_JNI_FWD2(std::vector<std::vector<uint8_t>>, GetFriends, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, userId)
+    ZCHATIM_JNI_FWD2(std::vector<std::vector<uint8_t>>, ListPendingFriendRequests, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, userId)
 
     ZCHATIM_JNI_FWD3(std::vector<uint8_t>, CreateGroup, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, creatorId, const std::string&, name)
     ZCHATIM_JNI_FWD3(bool, InviteMember, const std::vector<uint8_t>&, callerSessionId, const std::vector<uint8_t>&, groupId, const std::vector<uint8_t>&, userId)

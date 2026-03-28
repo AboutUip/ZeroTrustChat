@@ -13,6 +13,10 @@
 | Ed25519 公钥 / 签名 | 32 / 64 | 回复链、编辑、撤回等 |
 | `ZDB_MAX_WRITE_SIZE` | 500×1024 | 单条密文载荷上限 |
 | `FILE_CHUNK_SIZE` | 65536 | 分片默认大小 |
+| `MM1_USER_KV_TYPE_AVATAR_V1` | — | `int32`=`0x41565431`（ASCII `AVT1`）；头像原图 blob，见用户数据模块 |
+| `MM1_USER_KV_TYPE_DISPLAY_NAME_V1` | — | `int32`=`0x4E4D4E31`（ASCII `NMN1`）；UTF-8 展示昵称；`MM1_USER_DISPLAY_NAME_MAX_BYTES`=256 |
+| `MM1_USER_AVATAR_MAX_BYTES` | 65535 | 与 ZSP 单帧 Payload 上限一致；`StoreUserData` 在 `type==AVT1` 时强制 |
+| `MM1_USER_DISPLAY_NAME_MAX_BYTES` | 256 | `StoreUserData` 在 `type==NMN1` 时强制 |
 
 `bytes` = `std::vector<uint8_t>`；`bytes[]` = 其向量；`mapSS` = `map<string,string>`。列表行编码见 `MessageQueryManager.h`。
 
@@ -39,7 +43,8 @@
 | 规则 | C++ API（`JniInterface` / `JniBridge` 同名） |
 |------|---------------------------------------------|
 | 双会话同一 principal | `DestroySession` |
-| caller 有效且 principal 等于该 API 表中标定的 16B 入参 | `ListMessages` / `ListMessagesSinceTimestamp` / `ListMessagesSinceMessageId`（**`userId`**）；`DeleteMessage` / `RecallMessage`（**`senderId`**）；`StoreUserData` / `GetUserData` / `DeleteUserData`（**`userId`**）；`SendFriendRequest`（**`fromUserId`**）；`RespondFriendRequest`（**`responderId`**）；`DeleteFriend` / `GetFriends`（**`userId`**）；`CreateGroup`（**`creatorId`**）；`LeaveGroup`（**`userId`**）；`ValidateMentionRequest` / `RecordMentionAtAllUsage`（**`senderId`**）；`MuteMember`（**`mutedBy`**）；`UnmuteMember`（**`unmutedBy`**）；`UpdateGroupName`（**`updaterId`**）；`RegisterDeviceSession` / `UpdateLastActive` / `GetDeviceSessions`（**`userId`**）；`GetUserStatus`（**`userId`**）；`DeleteAccount` / `IsAccountDeleted`（**`userId`**）；`UpdateFriendNote`（**`userId`**）；`EditMessage`（**`senderId`**）；**`ChangeLocalPassword`（`userId`）** |
+| caller 有效且 principal 等于该 API 表中标定的 16B 入参 | `ListMessages` / `ListMessagesSinceTimestamp` / `ListMessagesSinceMessageId`（**`userId`**）；`DeleteMessage` / `RecallMessage`（**`senderId`**）；`StoreUserData` / `DeleteUserData`（**`userId`**）；`GetUserData`（**`userId`**，**例外见下**）；`SendFriendRequest`（**`fromUserId`**）；`RespondFriendRequest`（**`responderId`**）；`DeleteFriend` / `GetFriends`（**`userId`**）；`CreateGroup`（**`creatorId`**）；`LeaveGroup`（**`userId`**）；`ValidateMentionRequest` / `RecordMentionAtAllUsage`（**`senderId`**）；`MuteMember`（**`mutedBy`**）；`UnmuteMember`（**`unmutedBy`**）；`UpdateGroupName`（**`updaterId`**）；`RegisterDeviceSession` / `UpdateLastActive` / `GetDeviceSessions`（**`userId`**）；`GetUserStatus`（**`userId`**）；`DeleteAccount` / `IsAccountDeleted`（**`userId`**）；`UpdateFriendNote`（**`userId`**）；`EditMessage`（**`senderId`**）；**`ChangeLocalPassword`（`userId`）** |
+| **`GetUserData` 例外** | `type == MM1_USER_KV_TYPE_AVATAR_V1`（`AVT1`）或 `type == MM1_USER_KV_TYPE_DISPLAY_NAME_V1`（`NMN1`）时：除本人外，**principal 与 `userId` 为已接受好友**亦可读取（`FriendManager::GetFriends` 列表匹配）；其余 `type` 仍须 `principal == userId` |
 | **仅 caller**（不比对 principal 与 `imSessionId` / 消息 id） | `StoreMessage`, `RetrieveMessage`, `MarkMessageRead`, `GetUnreadSessionMessageIds`, `GetSessionMessages`, `GetSessionStatus`, `TouchSession`, `CleanupExpiredSessions`, `CleanupSessionMessages`, `InviteMember`, `RemoveMember`, `GetGroupMembers`, `UpdateGroupKey`, `IsMuted`, `GetGroupName`, `StoreFileChunk`, `GetFileChunk`, `CompleteFile`, `CancelFile`, `StoreTransferResumeChunkIndex`, `GetTransferResumeChunkIndex`, `CleanupTransferResumeChunkIndex`, `GetMessageReplyRelation`, `GetMessageEditState`, `CleanupExpiredDeviceSessions`, `CleanupExpiredData`, `OptimizeStorage`, `GetStorageStatus`, `GetMessageCount`, `GetFileCount`, `GenerateMasterKey`, `RefreshSessionKey`, `EmergencyWipe`, `GetStatus`, `RotateKeys`, `ConfigurePinnedPublicKeyHashes`, `IsClientBanned`, `ClearBan`, **`RtcStartCall`**, **`RtcAcceptCall`**, **`RtcRejectCall`**, **`RtcEndCall`**, **`RtcGetCallState`**, **`RtcGetCallKind`** |
 | **`caller` 可空**：空则跳过 `TryBindCaller`；非空则须有效 | `VerifyPinnedServerCertificate`, `RecordFailure` |
 | 桥接层**不**调用 `TryBindCaller`；**`MessageReplyManager`** 内 **`TryGetSessionUserId` + `senderId`** | `StoreMessageReplyRelation` |
@@ -106,9 +111,9 @@
 
 | C++ | 逻辑（camelCase） | 输入 | 输出（C++） | 说明 |
 |-----|-------------------|------|-------------|------|
-| `StoreUserData` | storeUserData | caller, userId, type(int32), data | `bool` | →`mm1_user_kv`；userId＝principal；Storage 第2.6节 |
-| `GetUserData` | getUserData | caller, userId, type(int32) | `bytes`（空=null） | 无行/不匹配 caller 为空向量 |
-| `DeleteUserData` | deleteUserData | caller, userId, type(int32) | `bool` | 无行 false |
+| `StoreUserData` | storeUserData | caller, userId, type(int32), data | `bool` | **MM2 已初始化**时 **`mm1::UserDataManager` → `MM2::StoreMm1UserDataBlob` → SQLCipher `mm1_user_kv`** 持久化（与 LPH1 相同）；userId＝principal；**`type==AVT1`** 时 `data.size()≤MM1_USER_AVATAR_MAX_BYTES`；**`type==NMN1`** 时 `data.size()≤MM1_USER_DISPLAY_NAME_MAX_BYTES`（否则 false）；Storage 第2.6节 |
+| `GetUserData` | getUserData | caller, userId, type(int32) | `bytes`（空=null） | 无行或无权为空向量；**`type==AVT1` 或 `type==NMN1`** 时见上文 principal 矩阵「`GetUserData` 例外」 |
+| `DeleteUserData` | deleteUserData | caller, userId, type(int32) | `bool` | userId＝principal；无行 false |
 
 ## 四、好友模块
 

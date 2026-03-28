@@ -603,6 +603,14 @@ extern "C" {
             ZChatIM::jni::JniInterface::GetFriends(JBytes(env, caller), JBytes(env, userId)));
     }
 
+    JNIEXPORT jobjectArray JNICALL
+    n_listPendingFriendRequests(JNIEnv* env, jclass, jbyteArray caller, jbyteArray userId)
+    {
+        return ToJObjectArrayOfByteArray(
+            env,
+            ZChatIM::jni::JniInterface::ListPendingFriendRequests(JBytes(env, caller), JBytes(env, userId)));
+    }
+
     JNIEXPORT jbyteArray JNICALL
     n_createGroup(JNIEnv* env, jclass, jbyteArray caller, jbyteArray creatorId, jstring name)
     {
@@ -1170,6 +1178,7 @@ extern "C" {
         {"respondFriendRequest", "([B[BZ[BJ[B)Z", reinterpret_cast<void*>(n_respondFriendRequest)},
         {"deleteFriend", "([B[B[BJ[B)Z", reinterpret_cast<void*>(n_deleteFriend)},
         {"getFriends", "([B[B)[[B", reinterpret_cast<void*>(n_getFriends)},
+        {"listPendingFriendRequests", "([B[B)[[B", reinterpret_cast<void*>(n_listPendingFriendRequests)},
         {"createGroup", "([B[BLjava/lang/String;)[B", reinterpret_cast<void*>(n_createGroup)},
         {"inviteMember", "([B[B[B)Z", reinterpret_cast<void*>(n_inviteMember)},
         {"removeMember", "([B[B[B)Z", reinterpret_cast<void*>(n_removeMember)},

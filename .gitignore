@@ -8,6 +8,8 @@ Client/Android/app/src/androidTest/
 
 # 数据文件
 *.zdb
+# Gradle 离线 zip（体积大，本地放入 data/gradle-offline/，见该目录 README）
+data/gradle-offline/*.zip
 # ZChatIM --test 持久输出（./data，cwd 为 ZChatIM 目录时）
 .mvn/
 

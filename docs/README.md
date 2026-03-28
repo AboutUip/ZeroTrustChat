@@ -15,13 +15,14 @@
 | [AUTHORITY.md](AUTHORITY.md) | 权威顺序、持久化摘要、交付判定 |
 | [01-Architecture/01-Overview.md](01-Architecture/01-Overview.md) | 架构总览 |
 | [01-Architecture/02-ZSP-Protocol.md](01-Architecture/02-ZSP-Protocol.md) | ZSP |
-| [01-Architecture/03-ZSP-Gateway-Client-Contract.md](01-Architecture/03-ZSP-Gateway-Client-Contract.md) | ZSP 网关—客户端实现契约（与 `ZChatServer` 对齐） |
+| [01-Architecture/03-ZSP-Gateway-Client-Contract.md](01-Architecture/03-ZSP-Gateway-Client-Contract.md) | ZSP 网关—客户端实现契约；§1.1 为 `ZChatServer` 入站/出站实现要点 |
 | [02-Core/01-MM1.md](02-Core/01-MM1.md) | MM1 |
 | [02-Core/02-MM2.md](02-Core/02-MM2.md) | MM2 概念 |
 | [02-Core/03-Storage.md](02-Core/03-Storage.md) | 元数据、MM2、密钥 4.2～4.3、第七节 |
 | [02-Core/04-ZdbBinaryLayout.md](02-Core/04-ZdbBinaryLayout.md) | `.zdb` v1 |
 | [03-Business/](03-Business/01-SpringBoot.md) | Spring、认证、群、会话、密钥、销户 |
 | [04-Features/README.md](04-Features/README.md) | 功能规范分组 |
+| [04-Features/14-Android-Client-ZChat.md](04-Features/14-Android-Client-ZChat.md) | Android 参考客户端（ZChat） |
 | [05-Operations/01-Backup.md](05-Operations/01-Backup.md) | 备份 |
 | [06-Appendix/01-JNI.md](06-Appendix/01-JNI.md) | JNI 契约与类型 |
 | [06-Appendix/03-Version.md](06-Appendix/03-Version.md) | 版本 |

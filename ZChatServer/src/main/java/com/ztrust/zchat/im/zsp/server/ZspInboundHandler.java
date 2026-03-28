@@ -7,6 +7,9 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.net.SocketException;
+import java.nio.channels.ClosedChannelException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -35,6 +38,9 @@ public final class ZspInboundHandler extends SimpleChannelInboundHandler<ZspFram
         if (metrics != null) {
             metrics.tcpConnected();
         }
+        if (props.isLogInboundEvents()) {
+            LOG.info("[zsp] tcp_open peer=" + ctx.channel().remoteAddress());
+        }
         super.channelActive(ctx);
     }
 
@@ -61,10 +67,64 @@ public final class ZspInboundHandler extends SimpleChannelInboundHandler<ZspFram
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+        boolean benignReset = isBenignPeerTransportClose(cause);
         if (metrics != null) {
-            metrics.recordClose("pipeline_error");
+            metrics.recordClose(benignReset ? "peer_reset" : "pipeline_error");
         }
-        ZspGatewayLog.diag(LOG, props, Level.WARNING, "pipeline_error");
+        if (benignReset) {
+            // 对端或网络 RST：移动网络/NAT/杀进程常见，不作为解码/业务异常告警
+            if (props.isLogInboundEvents()) {
+                LOG.info(
+                        "[zsp] tcp_reset peer="
+                                + ctx.channel().remoteAddress()
+                                + " (connection reset / broken pipe)");
+            } else if (props.isDiagnosticLogging() && LOG.isLoggable(Level.FINE)) {
+                LOG.log(
+                        Level.FINE,
+                        "[zsp] tcp_reset peer=" + ctx.channel().remoteAddress(),
+                        cause);
+            }
+            ZspGatewayLog.diag(LOG, props, Level.FINE, "peer_reset");
+        } else {
+            // 解码/管道异常打 WARNING，便于在 diagnostic-logging=false 时仍能看到原因（如 ZspCodecException）
+            LOG.log(
+                    Level.WARNING,
+                    "[zsp] pipeline_error peer=" + ctx.channel().remoteAddress(),
+                    cause);
+            ZspGatewayLog.diag(LOG, props, Level.WARNING, "pipeline_error");
+        }
         ctx.close();
+    }
+
+    /**
+     * 对端主动 RST、本端已关通道、broken pipe 等，属正常断线形态，与协议解析错误区分。
+     */
+    private static boolean isBenignPeerTransportClose(Throwable cause) {
+        for (Throwable t = cause; t != null; t = t.getCause()) {
+            if (t instanceof ClosedChannelException) {
+                return true;
+            }
+            if (t instanceof SocketException) {
+                return matchesTransportResetMessage(t.getMessage());
+            }
+            if (t instanceof IOException) {
+                return matchesTransportResetMessage(t.getMessage());
+            }
+            String cn = t.getClass().getName();
+            if (cn.endsWith("NativeIoException")) {
+                return matchesTransportResetMessage(t.getMessage());
+            }
+        }
+        return false;
+    }
+
+    private static boolean matchesTransportResetMessage(String message) {
+        if (message == null) {
+            return false;
+        }
+        String s = message.toLowerCase();
+        return s.contains("connection reset")
+                || s.contains("broken pipe")
+                || s.contains("connection aborted");
     }
 }

@@ -2,6 +2,7 @@ package com.ztrust.zchat.im.zsp.server;
 
 import com.ztrust.zchat.im.zsp.ZspConstants;
 import com.ztrust.zchat.im.zsp.ZspFrame;
+import com.ztrust.zchat.im.zsp.ZspFrameWireEncoder;
 import com.ztrust.zchat.im.zsp.ZspHeader;
 import com.ztrust.zchat.im.zsp.ZspMeta;
 import io.netty.channel.ChannelHandlerContext;
@@ -63,7 +64,7 @@ public final class ZspOfflineMessageQueue {
             ZspFrame shell = syntheticRequest(pending);
             ZspFrame out =
                     outbound.replySameFlags(recipientCtx, shell, pending.messageType(), pending.payload());
-            recipientCtx.writeAndFlush(out);
+            recipientCtx.writeAndFlush(ZspFrameWireEncoder.toByteBuf(recipientCtx.alloc(), out));
         }
     }
 

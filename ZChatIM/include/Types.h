@@ -49,6 +49,12 @@ namespace ZChatIM
     // mm1_user_kv; need MM2::Initialize.
     constexpr int32_t MM1_USER_KV_TYPE_LOCAL_PASSWORD_V1 = 0x4C504831; // ASCII "LPH1"
     constexpr int32_t MM1_USER_KV_TYPE_LOCAL_RECOVERY_V1 = 0x4C524331; // ASCII "LRC1"
+    /** mm1_user_kv：头像原图（JPEG/PNG/WebP 等）；经 UserDataManager→MM2::StoreMm1UserDataBlob 持久化；与 ZSP 单帧载荷上限对齐。 */
+    constexpr int32_t MM1_USER_KV_TYPE_AVATAR_V1 = 0x41565431; // ASCII "AVT1"
+    constexpr size_t  MM1_USER_AVATAR_MAX_BYTES   = 65535;
+    /** mm1_user_kv：UTF-8 展示昵称；读权限与 AVT1 相同（本人或已接受好友）。 */
+    constexpr int32_t MM1_USER_KV_TYPE_DISPLAY_NAME_V1 = 0x4E4D4E31; // ASCII "NMN1"
+    constexpr size_t  MM1_USER_DISPLAY_NAME_MAX_BYTES = 256;
     constexpr size_t LOCAL_ACCOUNT_PASSWORD_MIN_UTF8_BYTES             = 8;
     constexpr size_t LOCAL_ACCOUNT_PASSWORD_MAX_UTF8_BYTES             = 512;
     constexpr int    LOCAL_ACCOUNT_PBKDF2_ITERATIONS                   = 200'000;

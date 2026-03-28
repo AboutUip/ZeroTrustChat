@@ -225,6 +225,11 @@ namespace ZChatIM::mm2 {
             const std::vector<uint8_t>& toUserId,
             uint64_t                    createdSeconds,
             const std::vector<uint8_t>& signatureEd25519);
+        /** status==0 且 from_user、to_user 匹配时返回 request_id（用于去重）。 */
+        bool FindPendingFriendRequestFromTo(
+            const std::vector<uint8_t>& fromUserId,
+            const std::vector<uint8_t>& toUserId,
+            std::vector<uint8_t>&       outRequestId);
         bool UpdateFriendRequestStatus(
             const std::vector<uint8_t>& requestId,
             int32_t                     status,
@@ -239,6 +244,10 @@ namespace ZChatIM::mm2 {
             std::vector<uint8_t>&       outFromUser,
             std::vector<uint8_t>&       outToUser,
             int32_t&                    outStatus);
+        /** status==0 且 to_user = toUserId：每行 request_id(16)‖from_user(16)‖created_s(uint64 BE)。 */
+        bool ListPendingFriendRequestsForToUser(
+            const std::vector<uint8_t>&        toUserId,
+            std::vector<std::vector<uint8_t>>& outRows);
         // status==1 的边：返回与 userId 互为好友的对端 user_id（去重）。
         bool ListAcceptedFriendPeerUserIds(
             const std::vector<uint8_t>& userId,

@@ -2585,6 +2585,25 @@ namespace ZChatIM::mm2 {
         return true;
     }
 
+    bool MM2::FindPendingOutgoingFriendRequestId(
+        const std::vector<uint8_t>& fromUserId,
+        const std::vector<uint8_t>& toUserId,
+        std::vector<uint8_t>&       outRequestId)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        outRequestId.clear();
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.FindPendingFriendRequestFromTo(fromUserId, toUserId, outRequestId)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return !outRequestId.empty();
+    }
+
     bool MM2::UpdateFriendRequestStatus(
         const std::vector<uint8_t>& requestId,
         bool                        accept,
@@ -2651,6 +2670,24 @@ namespace ZChatIM::mm2 {
             return false;
         }
         if (!m_metadataDb.GetFriendRequestRow(requestId, outFromUser, outToUser, outStatus)) {
+            SetLastError(m_metadataDb.LastError());
+            return false;
+        }
+        return true;
+    }
+
+    bool MM2::ListPendingFriendRequestsForMm1(
+        const std::vector<uint8_t>& userId,
+        std::vector<std::vector<uint8_t>>& outRows)
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_stateMutex);
+        outRows.clear();
+        m_lastError.clear();
+        if (!m_initialized) {
+            SetLastError("MM2 not initialized");
+            return false;
+        }
+        if (!m_metadataDb.ListPendingFriendRequestsForToUser(userId, outRows)) {
             SetLastError(m_metadataDb.LastError());
             return false;
         }

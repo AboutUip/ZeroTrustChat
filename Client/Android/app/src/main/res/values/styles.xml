@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Widget.ZChat.BottomNavigation" parent="Widget.Material3.BottomNavigationView">
+        <item name="android:minHeight">@dimen/bottom_nav_min_height</item>
+        <item name="itemIconSize">@dimen/bottom_nav_icon_size</item>
+        <item name="itemPaddingTop">0dp</item>
+        <item name="itemPaddingBottom">0dp</item>
+        <item name="itemTextAppearanceActive">@style/TextAppearance.ZChat.BottomNav.Label</item>
+        <item name="itemTextAppearanceInactive">@style/TextAppearance.ZChat.BottomNav.Label</item>
+    </style>
+
+    <style name="TextAppearance.ZChat.BottomNav.Label" parent="TextAppearance.Material3.LabelSmall">
+        <item name="android:textSize">10sp</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+</resources>

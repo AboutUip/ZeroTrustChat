@@ -23,7 +23,7 @@
 
 | 模块 | 说明 | 详见 |
 |------|------|------|
-| ZSP编解码 | 协议解析 | [02-ZSP-Protocol.md](02-ZSP-Protocol.md) |
+| ZSP 入站解码 / 出站序列化 | 入站：`ZspFrameDecoder` → `ZspFrame`；出站：`ZspFrameWireEncoder` → `ByteBuf` 后写出（见 [01-SpringBoot.md](../03-Business/01-SpringBoot.md) §3.1） | [02-ZSP-Protocol.md](02-ZSP-Protocol.md) |
 | 消息路由 | 消息转发 | [01-SpringBoot.md](../03-Business/01-SpringBoot.md) |
 | 业务调度 | 调用JNI | [01-SpringBoot.md](../03-Business/01-SpringBoot.md) |
 

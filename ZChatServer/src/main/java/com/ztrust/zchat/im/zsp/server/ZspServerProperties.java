@@ -45,7 +45,7 @@ public class ZspServerProperties {
     /** 入站是否校验 Auth Tag（HMAC 模式下建议开启）。 */
     private boolean verifyInboundAuthTag = false;
 
-    /** Meta.timestamp 与服务器时间允许偏差（分钟），对齐 8.4 Timestamp 窗口；≤0 关闭。 */
+    /** Meta.timestamp 与服务器时间允许偏差（分钟），对齐 8.4 Timestamp 窗口；≤0 关闭时间戳校验（仍校验 seq/nonce）。 */
     private int replayTimestampWindowMinutes = 5;
 
     /** Flags.Compressed=1 时是否直接断开（未实现解压）。生产建议 true。 */
@@ -61,6 +61,12 @@ public class ZspServerProperties {
      * 排障时可临时开启。见 docs/03-Business/01-SpringBoot.md 第八节。
      */
     private boolean diagnosticLogging = false;
+
+    /**
+     * 是否记录 ZSP TCP 接入、帧关闭原因码（不含载荷）、解码/管道异常摘要。默认 true 便于排障；生产可关。
+     * 与 {@link #diagnosticLogging} 不同：后者需显式开启；本项为轻量可观测性。
+     */
+    private boolean logInboundEvents = true;
 
     private final NativePaths nativePaths = new NativePaths();
 
@@ -198,6 +204,14 @@ public class ZspServerProperties {
 
     public void setDiagnosticLogging(boolean diagnosticLogging) {
         this.diagnosticLogging = diagnosticLogging;
+    }
+
+    public boolean isLogInboundEvents() {
+        return logInboundEvents;
+    }
+
+    public void setLogInboundEvents(boolean logInboundEvents) {
+        this.logInboundEvents = logInboundEvents;
     }
 
     public NativePaths getNative() {

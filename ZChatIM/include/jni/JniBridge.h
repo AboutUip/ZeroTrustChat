@@ -180,6 +180,7 @@ namespace ZChatIM
 				const std::vector<uint8_t>& userId,
 				int32_t type);
 
+			/** 成功时 17 字节：requestId(16)‖duplicatePending(1, 0/1)；失败或空。 */
 			std::vector<uint8_t> SendFriendRequest(
 				const std::vector<uint8_t>& callerSessionId,
 				const std::vector<uint8_t>& fromUserId,
@@ -203,6 +204,10 @@ namespace ZChatIM
 				const std::vector<uint8_t>& signatureEd25519);
 
 			std::vector<std::vector<uint8_t>> GetFriends(
+				const std::vector<uint8_t>& callerSessionId,
+				const std::vector<uint8_t>& userId);
+
+			std::vector<std::vector<uint8_t>> ListPendingFriendRequests(
 				const std::vector<uint8_t>& callerSessionId,
 				const std::vector<uint8_t>& userId);
 

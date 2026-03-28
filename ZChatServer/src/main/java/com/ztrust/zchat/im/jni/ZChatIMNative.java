@@ -132,6 +132,9 @@ public final class ZChatIMNative {
 
     public static native byte[][] getFriends(byte[] callerSessionId, byte[] userId);
 
+    /** 每项为 requestId(16)‖fromUserId(16)‖createdSec(u64 BE)。 */
+    public static native byte[][] listPendingFriendRequests(byte[] callerSessionId, byte[] userId);
+
     public static native byte[] createGroup(byte[] callerSessionId, byte[] creatorId, String name);
 
     public static native boolean inviteMember(

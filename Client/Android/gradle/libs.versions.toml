@@ -6,13 +6,35 @@ junitVersion = "1.1.5"
 espressoCore = "3.5.1"
 appcompat = "1.6.1"
 material = "1.10.0"
+securityCrypto = "1.1.0-alpha06"
+fragment = "1.8.5"
+viewpager2 = "1.1.0"
+activity = "1.8.2"
+recyclerview = "1.3.2"
+swiperefreshlayout = "1.1.0"
+bcprov = "1.78.1"
+firebaseBom = "33.8.0"
+work = "2.9.1"
+# com.infobip:google-webrtc 等变体易缺类（如 org.webrtc.Environment）。使用 Maven Central 维护的 io.github.webrtc-sdk:android。
+webrtc-sdk = "125.6422.07"
 
 [libraries]
+bcprov-jdk18on = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bcprov" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
 appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
+fragment = { group = "androidx.fragment", name = "fragment", version.ref = "fragment" }
+viewpager2 = { group = "androidx.viewpager2", name = "viewpager2", version.ref = "viewpager2" }
+activity = { group = "androidx.activity", name = "activity", version.ref = "activity" }
+recyclerview = { group = "androidx.recyclerview", name = "recyclerview", version.ref = "recyclerview" }
+swiperefreshlayout = { group = "androidx.swiperefreshlayout", name = "swiperefreshlayout", version.ref = "swiperefreshlayout" }
+firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
+firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }
+work-runtime = { group = "androidx.work", name = "work-runtime", version.ref = "work" }
+webrtc-android = { group = "io.github.webrtc-sdk", name = "android", version.ref = "webrtc-sdk" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

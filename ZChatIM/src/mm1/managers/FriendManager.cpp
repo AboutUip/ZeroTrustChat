@@ -11,29 +11,38 @@
 
 namespace ZChatIM::mm1 {
 
-    std::vector<uint8_t> FriendManager::SendFriendRequest(
+    SendFriendRequestResult FriendManager::SendFriendRequest(
         const std::vector<uint8_t>& fromUserId,
         const std::vector<uint8_t>& toUserId,
         uint64_t                    timestampSeconds,
         const std::vector<uint8_t>& signatureEd25519)
     {
         std::lock_guard<std::recursive_mutex> lock(MM1::Instance().m_apiRecursiveMutex);
+        SendFriendRequestResult out;
         if (fromUserId.size() != USER_ID_SIZE || toUserId.size() != USER_ID_SIZE) {
-            return {};
+            return out;
         }
         if (common::Memory::ConstantTimeCompare(fromUserId.data(), toUserId.data(), USER_ID_SIZE)) {
-            return {};
+            return out;
         }
         if (!MM1::Instance().GetFriendVerificationManager().VerifyFriendRequestSignature(
                 fromUserId, toUserId, timestampSeconds, signatureEd25519)) {
-            return {};
+            return out;
+        }
+        std::vector<uint8_t> existingId;
+        if (mm2::MM2::Instance().FindPendingOutgoingFriendRequestId(fromUserId, toUserId, existingId)) {
+            out.requestId        = std::move(existingId);
+            out.duplicatePending = true;
+            return out;
         }
         std::vector<uint8_t> rid;
         if (!mm2::MM2::Instance().StoreFriendRequest(
                 fromUserId, toUserId, timestampSeconds, signatureEd25519, rid)) {
-            return {};
+            return out;
         }
-        return rid;
+        out.requestId        = std::move(rid);
+        out.duplicatePending = false;
+        return out;
     }
 
     bool FriendManager::RespondFriendRequest(
@@ -94,6 +103,20 @@ namespace ZChatIM::mm1 {
             return out;
         }
         if (!mm2::MM2::Instance().ListAcceptedFriendUserIdsForMm1(userId, out)) {
+            out.clear();
+        }
+        return out;
+    }
+
+    std::vector<std::vector<uint8_t>> FriendManager::ListPendingIncomingFriendRequests(
+        const std::vector<uint8_t>& userId)
+    {
+        std::lock_guard<std::recursive_mutex> lock(MM1::Instance().m_apiRecursiveMutex);
+        std::vector<std::vector<uint8_t>> out;
+        if (userId.size() != USER_ID_SIZE) {
+            return out;
+        }
+        if (!mm2::MM2::Instance().ListPendingFriendRequestsForMm1(userId, out)) {
             out.clear();
         }
         return out;

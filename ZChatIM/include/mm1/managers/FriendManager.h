@@ -5,9 +5,15 @@
 
 namespace ZChatIM {
     namespace mm1 {
+
+        struct SendFriendRequestResult {
+            std::vector<uint8_t> requestId;
+            bool                 duplicatePending{false};
+        };
+
         class FriendManager {
         public:
-            std::vector<uint8_t> SendFriendRequest(
+            SendFriendRequestResult SendFriendRequest(
                 const std::vector<uint8_t>& fromUserId,
                 const std::vector<uint8_t>& toUserId,
                 uint64_t timestampSeconds,
@@ -29,6 +35,9 @@ namespace ZChatIM {
                 const std::vector<uint8_t>& signatureEd25519);
 
             std::vector<std::vector<uint8_t>> GetFriends(const std::vector<uint8_t>& userId);
+
+            /** 待处理申请：每行 request_id(16)‖from_user(16)‖created_s(uint64 BE)。 */
+            std::vector<std::vector<uint8_t>> ListPendingIncomingFriendRequests(const std::vector<uint8_t>& userId);
         };
     } // namespace mm1
 } // namespace ZChatIM

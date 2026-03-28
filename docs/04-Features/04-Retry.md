@@ -90,11 +90,12 @@
 
 ---
 
-## 六、实现状态（ZChatIM C++）
+## 六、实现状态
 
 | 层级 | 说明 |
 |------|------|
-| **本仓库** | **`ZChatIMCore`** 以 **MM1/MM2 存储与 JNI 头**为主；**不含 Netty ZSP 编解码器**。重传在 **Java/SpringBoot** 实现时须与本节及 **`02-ZSP-Protocol.md`** 对齐。 |
+| **ZChatIM C++** | **`ZChatIMCore`** 以 **MM1/MM2 存储与 JNI 头**为主；**不含** Netty/TCP ZSP 栈。重传在 **Java** 侧实现时须与本节及 **`02-ZSP-Protocol.md`** 对齐。 |
+| **`ZChatServer`（Java）** | 入站 **`ZspFrameDecoder`**；出站 **`ZspFrameWireEncoder`** → `ByteBuf`；调度 **`ZspMessageDispatcher`**。详见 **`docs/03-Business/01-SpringBoot.md`** §3.1 / §4。 |
 | **联调** | JNI 业务入口见 **`docs/06-Appendix/01-JNI.md`**；**`ZChatIM/jni/ZChatIMJNI.cpp`** 在 **`JNI_OnLoad`** 中调用 **`zchatim_RegisterNatives`** 绑定 **`JniNatives.cpp`**（与 **`ZChatIM/docs/Implementation-Status.md`** 为准）。 |
 
 ---

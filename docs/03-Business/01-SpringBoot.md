@@ -37,14 +37,17 @@
 
 ## 三、模块划分
 
-### 3.1 ZSP Server
+### 3.1 ZSP Server（`ZChatServer`，Netty 管道）
 
-| 模块 | 说明 |
+| 组件 | 说明 |
 |------|------|
-| ZSPDecoder | 协议解码 |
-| ZSPEncoder | 协议编码 |
-| ZSPHandler | 消息分发 |
-| HeartbeatHandler | 心跳检测 |
+| `IdleStateHandler` | 读空闲检测（秒数见 `zchat.zsp.reader-idle-seconds`） |
+| `ZspIdleEventHandler` | 与空闲事件配合（若启用） |
+| `ZspFrameDecoder` | **入站**：字节流 → `ZspFrame`（`ByteToMessageDecoder`） |
+| `ZspInboundHandler` | 将 `ZspFrame` 交给 `ZspMessageDispatcher` |
+| （无出站帧编码 Handler） | **出站**不在管道中传递 `ZspFrame`；见下节 |
+
+**出站字节序列化**：`com.ztrust.zchat.im.zsp.ZspFrameWireEncoder#toByteBuf(io.netty.buffer.ByteBufAllocator, ZspFrame)` 将 `ZspFrame` 写成 **`io.netty.buffer.ByteBuf`**；`ZspMessageDispatcher`、`ZspOfflineMessageQueue` 等在调用 `ChannelHandlerContext#writeAndFlush` 前完成编码。**TCP 上仅写出 `ByteBuf`**。
 
 ### 3.2 Business
 
@@ -69,22 +72,28 @@
 ### 4.1 接收消息
 
 ```
-1. Netty 接收 ZSP 数据
-2. ZSPDecoder 解析 Header + Meta
-3. 获取 MessageType、ZSP 层 SessionID（4B 头字段，与 imSessionId 16B 不同，见 01-JNI.md）
+1. Netty 接收 TCP 字节
+2. ZspFrameDecoder 解析为 ZspFrame（Header + Meta + Payload + Auth Tag）
+3. ZspMessageDispatcher：校验、防重放、JNI；获取 MessageType、ZSP 层 SessionID（4B 头字段，与 imSessionId 16B 不同，见 01-JNI.md）
 4. 调用 JNI: 已认证上下文中 storeMessage(caller, imSessionId, payload)（完整签名见 01-JNI.md）
 5. 获取 msgId
 6. 路由发送
 ```
 
+**用户头像（ZSP `0x86`–`0x88`）**：在**已认证**连接上，`ZspMessageDispatcher#dispatchCleartext` 将 `USER_AVATAR_SET` / `GET` / `DELETE` 分别映射为 JNI `storeUserData` / `getUserData` / `deleteUserData`，`type` 使用 `ZspConstants.MM1_USER_KV_TYPE_AVATAR_V1`（与 `Types.h` 中 `AVT1` 一致）。载荷与权限见 [`02-ZSP-Protocol.md`](../01-Architecture/02-ZSP-Protocol.md) **§6.8** 与 [`01-JNI.md`](../06-Appendix/01-JNI.md) **用户数据模块**。
+
+**展示昵称与资料（ZSP `0x8A`–`0x8C`）**：`USER_DISPLAY_NAME_SET` / `GET` 映射为 JNI `storeUserData` / `getUserData`，`type` 使用 `ZspConstants.MM1_USER_KV_TYPE_DISPLAY_NAME_V1`（`NMN1`）。`USER_PROFILE_GET` 在同一次处理中依次调用 `getUserData(..., NMN1)` 与 `getUserData(..., AVT1)`，将应答编码为 **`nickLen‖nick‖avatarLen‖avatar`**（见 [`02-ZSP-Protocol.md`](../01-Architecture/02-ZSP-Protocol.md) **§6.9**）。过长时网关按实现截断以适配单帧 Payload 上限。
+
+**注销账号（ZSP `0x8D`）**：`ACCOUNT_DELETE` 将载荷（32 字节 SHA-256 口令摘要）作为双确认令牌传入 JNI `deleteAccount`；成功后应答并关闭连接（见 `02-ZSP-Protocol.md` **§6.10**）。
+
 ### 4.2 发送消息
 
 ```
-1. 根据连接查找目标 Channel
+1. 根据连接查找目标 ChannelHandlerContext
 2. 调用 JNI: retrieveMessage(caller, messageId)（或 getSessionMessages 等）
-3. 获取 opaque 载荷
-4. ZSPEncoder 编码
-5. 发送
+3. 获取 opaque 载荷，组装 ZspFrame（含出站 Meta / Auth Tag 等）
+4. ZspFrameWireEncoder.toByteBuf(alloc, frame) → ByteBuf
+5. ChannelHandlerContext.writeAndFlush(ByteBuf)
 ```
 
 ---

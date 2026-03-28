@@ -65,3 +65,7 @@ Value:
 - 消息撤回时: 同时通知被回复的消息
 - 消息删除时: 保留回复关系
 ```
+
+## 六、Android 参考客户端（ZChat）
+
+明文单聊路径下，客户端使用应用层前缀与 `ChatReplyCodec` 承载「引用回复」展示与发送；与网关 MM2 回复关系表 **独立**，以 **[14-Android-Client-ZChat.md](14-Android-Client-ZChat.md)** 第五节为准。

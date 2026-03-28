@@ -199,6 +199,10 @@ namespace ZChatIM
 				const std::vector<uint8_t>& callerSessionId,
 				const std::vector<uint8_t>& userId);
 
+			static std::vector<std::vector<uint8_t>> ListPendingFriendRequests(
+				const std::vector<uint8_t>& callerSessionId,
+				const std::vector<uint8_t>& userId);
+
 			static std::vector<uint8_t> CreateGroup(
 				const std::vector<uint8_t>& callerSessionId,
 				const std::vector<uint8_t>& creatorId,

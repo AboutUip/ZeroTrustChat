@@ -90,7 +90,7 @@ type: profile(头像), friend_list, settings
 
 **密文**：`ImRamMessageRow.blob` 为 AES-GCM `nonce(12)‖ciphertext‖tag(16)`（与 `.zdb` chunk0 包同形，**默认不落盘**）。`List*` 按 `stored_at_ms`。`sender_user_id` 空则 MM1 编辑/撤回拒绝。
 
-**同库表（非 IM 正文）**：`friend_requests`、`mm2_group_display`、`mm2_file_transfer`、`data_blocks`（文件分片）、`mm1_user_kv`、`mm2_group_mute`、`mm1_device_sessions`、`mm1_im_session_activity`、`mm1_cert_pin_*`、`mm1_user_status`、`mm1_mention_atall_window` 等——见 `SqliteMetadataDb` / 第七节表。`mm1_user_kv`：`user_id`+`type` PK，`data`≤16MiB。退群/踢人前删 `mm2_group_mute` 对应行。
+**同库表（非 IM 正文）**：`friend_requests`、`mm2_group_display`、`mm2_file_transfer`、`data_blocks`（文件分片）、`mm1_user_kv`、`mm2_group_mute`、`mm1_device_sessions`、`mm1_im_session_activity`、`mm1_cert_pin_*`、`mm1_user_status`、`mm1_mention_atall_window` 等——见 `SqliteMetadataDb` / 第七节表。`mm1_user_kv`：`user_id`+`type` PK，`data`≤16MiB；**`type` 为任意 int32**（如本地口令 **LPH1/LRC1**、头像 **`MM1_USER_KV_TYPE_AVATAR_V1`（AVT1）**、展示昵称 **`MM1_USER_KV_TYPE_DISPLAY_NAME_V1`（NMN1）** 等），经 **`UserDataManager` → `MM2::StoreMm1UserDataBlob`** 与 JNI **`storeUserData`** 同源持久化。退群/踢人前删 `mm2_group_mute` 对应行。
 
 **`user_version=11`**：当前 schema；无 IM 消息表；自 v10 用 `CREATE IF NOT EXISTS` 补齐后置 11。
 

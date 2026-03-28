@@ -2,7 +2,7 @@
 
 # ZeroTrust-Chat
 
-> **ZChatIM** — 面向内网 / 强隔离的即时通讯：敏感能力收敛于 **C++ 可信基（MM1 / MM2）**，Java 只做 **ZSP** 编解码与编排。
+> **ZChatIM** — 面向内网 / 强隔离的即时通讯：敏感能力收敛于 **C++ 可信基（MM1 / MM2）**；**`ZChatServer`** 在不可信区完成 **ZSP 入站解码**（`ZspFrameDecoder`）、**出站字节序列化**（`ZspFrameWireEncoder`）与 JNI 编排（见 **`docs/03-Business/01-SpringBoot.md`**）。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=flat-square)](LICENSE)
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-00599c?style=flat-square)
@@ -10,7 +10,7 @@
 
 <br/>
 
-**产品规范** → **[`docs/README.md`](docs/README.md)**；**持久化裁决** → **[`docs/AUTHORITY.md`](docs/AUTHORITY.md)**；**C++ 构建/实现跟踪** → **[`ZChatIM/docs/README.md`](ZChatIM/docs/README.md)**
+**产品规范** → **[`docs/README.md`](docs/README.md)**；**持久化裁决** → **[`docs/AUTHORITY.md`](docs/AUTHORITY.md)**；**C++ 构建/实现跟踪** → **[`ZChatIM/docs/README.md`](ZChatIM/docs/README.md)**；**Android 参考客户端（ZChat）** → **[`docs/04-Features/14-Android-Client-ZChat.md`](docs/04-Features/14-Android-Client-ZChat.md)** · **[`Client/Android/README.md`](Client/Android/README.md)**
 
 </div>
 
@@ -68,12 +68,13 @@ flowchart LR
 
 ```text
 ZerOS-Chat/
-├── docs/           ← 产品规范（架构、业务、存储、JNI 契约）
-├── ZChatIM/docs/   ← C++ 构建、实现跟踪、Scope
-├── ZChatIM/        ← C++：CMake · 源码 · jni/
-├── Client/         ← 客户端发布物说明 → Client/README.md
+├── docs/              ← 产品规范（架构、业务、存储、JNI 契约）
+├── ZChatIM/docs/      ← C++ 构建、实现跟踪、Scope
+├── ZChatIM/           ← C++：CMake · 源码 · jni/
+├── Client/            ← 客户端：发布物约定 → Client/README.md
+│   └── Android/       ← ZChat Android 源码与构建 → Client/Android/README.md
 ├── LICENSE
-└── README.md       ← 本页
+└── README.md          ← 本页
 ```
 
 Spring Boot 可与本仓库**解耦**；职责边界见 **[01-SpringBoot.md](docs/03-Business/01-SpringBoot.md)**。

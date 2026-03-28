@@ -18,8 +18,9 @@
 
 **与本仓库的关系**：
 
+- **Android 源码与 Gradle 工程**：**[`Android/README.md`](Android/README.md)**（ZSP 参考客户端 `com.kite.zchat`，不含 ZChatIM JNI）。
 - 若客户端通过 **JNI** 调用 **`ZChatIM`**，契约见 **[`docs/06-Appendix/01-JNI.md`](../docs/06-Appendix/01-JNI.md)** 与 **[`ZChatIM/docs/JNI-API-Documentation.md`](../ZChatIM/docs/JNI-API-Documentation.md)**。
-- 协议与消息语义见 **[`docs/01-Architecture/02-ZSP-Protocol.md`](../docs/01-Architecture/02-ZSP-Protocol.md)**。
+- 协议与消息语义见 **[`docs/01-Architecture/02-ZSP-Protocol.md`](../docs/01-Architecture/02-ZSP-Protocol.md)**；Android 侧 SYNC/信令补充见 **[`docs/04-Features/14-Android-Client-ZChat.md`](../docs/04-Features/14-Android-Client-ZChat.md)**。
 
 ---
 

@@ -1,7 +1,6 @@
 package com.ztrust.zchat.im.zsp.server;
 
 import com.ztrust.zchat.im.zsp.ZspFrameDecoder;
-import com.ztrust.zchat.im.zsp.ZspFrameEncoder;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
@@ -70,8 +69,7 @@ public final class ZspNettyServer implements SmartLifecycle {
                                 .addLast(new IdleStateHandler(0, 0, props.getReaderIdleSeconds(), TimeUnit.SECONDS))
                                 .addLast(new ZspIdleEventHandler())
                                 .addLast(new ZspFrameDecoder())
-                                .addLast(inboundHandler)
-                                .addLast(new ZspFrameEncoder());
+                                .addLast(inboundHandler);
                     }
                 });
         try {

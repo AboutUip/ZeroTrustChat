@@ -90,10 +90,12 @@ public final class ZChatNativeOperations implements ZspNativeGateway, Disposable
         ZChatIMNative.destroySession(callerSessionId, callerSessionId);
     }
 
+    @Override
     public boolean registerLocalUser(byte[] userId, byte[] password, byte[] recoveryToken) {
         return ZChatIMNative.registerLocalUser(userId, password, recoveryToken);
     }
 
+    @Override
     public byte[] authWithLocalPassword(byte[] userId, byte[] password, byte[] clientIp) {
         return ZChatIMNative.authWithLocalPassword(userId, password, clientIp);
     }
@@ -256,8 +258,22 @@ public final class ZChatNativeOperations implements ZspNativeGateway, Disposable
         return ZChatIMNative.deleteFriend(callerSessionId, userId, friendId, timestampSeconds, signatureEd25519);
     }
 
+    @Override
     public byte[][] getFriends(byte[] callerSessionId, byte[] userId) {
         return ZChatIMNative.getFriends(callerSessionId, userId);
+    }
+
+    @Override
+    public byte[][] listPendingFriendRequests(byte[] callerSessionId, byte[] userId) {
+        return ZChatIMNative.listPendingFriendRequests(callerSessionId, userId);
+    }
+
+    /**
+     * 枚举用户所在群 ID。待 ZChatIM 暴露 JNI（例如 {@code listGroupIdsForUser}）后在此对接；当前返回空数组。
+     */
+    @Override
+    public byte[][] listGroupIdsForUser(byte[] callerSessionId, byte[] userId) {
+        return new byte[0][];
     }
 
     public byte[] createGroup(byte[] callerSessionId, byte[] creatorId, String name) {
@@ -325,6 +341,7 @@ public final class ZChatNativeOperations implements ZspNativeGateway, Disposable
         return ZChatIMNative.updateGroupName(callerSessionId, groupId, updaterId, newGroupName, nowMs);
     }
 
+    @Override
     public String getGroupName(byte[] callerSessionId, byte[] groupId) {
         return ZChatIMNative.getGroupName(callerSessionId, groupId);
     }
@@ -466,6 +483,7 @@ public final class ZChatNativeOperations implements ZspNativeGateway, Disposable
         ZChatIMNative.clearBan(callerSessionId, clientId);
     }
 
+    @Override
     public boolean deleteAccount(byte[] callerSessionId, byte[] userId, byte[] reauthToken, byte[] secondConfirmToken) {
         return ZChatIMNative.deleteAccount(callerSessionId, userId, reauthToken, secondConfirmToken);
     }

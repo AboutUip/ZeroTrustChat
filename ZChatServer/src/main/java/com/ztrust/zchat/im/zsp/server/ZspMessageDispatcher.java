@@ -6,6 +6,7 @@ import com.ztrust.zchat.im.zsp.ZspConstants;
 import com.ztrust.zchat.im.zsp.ZspFlags;
 import com.ztrust.zchat.im.zsp.ZspFrame;
 import com.ztrust.zchat.im.zsp.ZspFrameValidator;
+import com.ztrust.zchat.im.zsp.ZspFrameWireEncoder;
 import com.ztrust.zchat.im.zsp.security.ZspFrameTagService;
 import com.ztrust.zchat.im.zsp.meta.ZspMetaCodec;
 import com.ztrust.zchat.im.zsp.meta.ZspMetaSection;
@@ -13,6 +14,7 @@ import com.ztrust.zchat.im.zsp.payload.ZspPayloadReaders;
 import com.ztrust.zchat.im.zsp.replay.ZspPeerReplayState;
 import com.ztrust.zchat.im.zsp.routing.ZspRoutingEnvelope;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -58,6 +60,11 @@ public final class ZspMessageDispatcher {
         this.offlineQueue = offlineQueue;
         this.nativeOps = nativeOps;
         this.metrics = metrics;
+    }
+
+    /** 在业务侧编码为 {@link io.netty.buffer.ByteBuf} 再写出，管道中不再传递 {@link ZspFrame}。 */
+    private static ChannelFuture writeFrame(ChannelHandlerContext ctx, ZspFrame frame) {
+        return ctx.writeAndFlush(ZspFrameWireEncoder.toByteBuf(ctx.alloc(), frame));
     }
 
     public void dispatch(ChannelHandlerContext ctx, ZspFrame frame) {
@@ -110,6 +117,14 @@ public final class ZspMessageDispatcher {
                 handleHeartbeat(ctx, frame);
                 return;
             }
+            if (type == MessageTypes.LOCAL_REGISTER) {
+                handleLocalRegister(ctx, frame);
+                return;
+            }
+            if (type == MessageTypes.LOCAL_PASSWORD_AUTH) {
+                handleLocalPasswordAuth(ctx, frame);
+                return;
+            }
             if (type == MessageTypes.AUTH) {
                 handleAuth(ctx, frame);
                 return;
@@ -146,7 +161,64 @@ public final class ZspMessageDispatcher {
     private void handleHeartbeat(ChannelHandlerContext ctx, ZspFrame frame) {
         if (properties.isHeartbeatEcho()) {
             ZspFrame echo = outbound.replySameFlags(ctx, frame, MessageTypes.HEARTBEAT, new byte[0]);
-            ctx.writeAndFlush(echo);
+            ChannelFuture f = writeFrame(ctx, echo);
+            f.addListener(
+                    cf -> {
+                        if (!cf.isSuccess()) {
+                            LOG.log(
+                                    Level.WARNING,
+                                    "[zsp] heartbeat_echo_write_failed peer=" + ctx.channel().remoteAddress(),
+                                    cf.cause());
+                            return;
+                        }
+                        if (properties.isLogInboundEvents()) {
+                            LOG.info("[zsp] heartbeat_echo peer=" + ctx.channel().remoteAddress());
+                        }
+                    });
+        }
+    }
+
+    private void handleLocalRegister(ChannelHandlerContext ctx, ZspFrame frame) {
+        Optional<LocalRegisterPayload> parsed = parseLocalRegisterPayload(frame.payload());
+        if (parsed.isEmpty()) {
+            closeDiag(ctx, Level.WARNING, "invalid_local_register_payload");
+            return;
+        }
+        LocalRegisterPayload p = parsed.get();
+        boolean ok = nativeOps.registerLocalUser(p.userId(), p.password(), p.recovery());
+        byte[] replyPayload = new byte[] {(byte) (ok ? 1 : 0)};
+        ZspFrame reply = outbound.replySameFlags(ctx, frame, MessageTypes.LOCAL_REGISTER, replyPayload);
+        writeFrame(ctx, reply);
+    }
+
+    private void handleLocalPasswordAuth(ChannelHandlerContext ctx, ZspFrame frame) {
+        Optional<LocalPasswordPayload> parsed = parseLocalPasswordPayload(frame.payload());
+        if (parsed.isEmpty()) {
+            closeDiag(ctx, Level.WARNING, "invalid_local_password_auth_payload");
+            return;
+        }
+        LocalPasswordPayload p = parsed.get();
+        byte[] ip = remoteIpBytes(ctx);
+        byte[] session = nativeOps.authWithLocalPassword(p.userId(), p.password(), ip);
+        if (session == null || session.length == 0) {
+            ZspFrame reply = outbound.replySameFlags(ctx, frame, MessageTypes.LOCAL_PASSWORD_AUTH, new byte[0]);
+            writeFrame(ctx, reply);
+            return;
+        }
+        if (session.length > ZspConstants.MAX_PAYLOAD_LENGTH_U16) {
+            closeMetricOnly(ctx, "auth_session_oversize");
+            return;
+        }
+        ctx.channel().attr(ZspChannelAttributes.CALLER_SESSION_ID).set(session);
+        byte[] uid16 = copyUserId16(p.userId());
+        ctx.channel().attr(ZspChannelAttributes.AUTH_USER_ID_16).set(uid16);
+        registry.register(uid16, ctx.channel());
+
+        ZspFrame reply = outbound.replySameFlags(ctx, frame, MessageTypes.LOCAL_PASSWORD_AUTH, session);
+        writeFrame(ctx, reply);
+
+        if (uid16 != null && uid16.length == ZspConstants.USER_ID_SIZE) {
+            offlineQueue.drainTo(ctx, uid16, outbound);
         }
     }
 
@@ -173,7 +245,7 @@ public final class ZspMessageDispatcher {
         registry.register(uid16, ctx.channel());
 
         ZspFrame reply = outbound.replySameFlags(ctx, frame, MessageTypes.AUTH, session);
-        ctx.writeAndFlush(reply);
+        writeFrame(ctx, reply);
 
         if (uid16 != null && uid16.length == ZspConstants.USER_ID_SIZE) {
             offlineQueue.drainTo(ctx, uid16, outbound);
@@ -248,7 +320,314 @@ public final class ZspMessageDispatcher {
                 nativeOps.storeMessage(caller, extractImSession(payload), payload);
             }
             case MessageTypes.GROUP_NAME_UPDATE -> cleartextGroupNameUpdate(ctx, frame, caller, payload);
+            case MessageTypes.USER_AVATAR_SET -> cleartextUserAvatarSet(ctx, frame, caller, payload);
+            case MessageTypes.USER_AVATAR_GET -> cleartextUserAvatarGet(ctx, frame, caller, payload);
+            case MessageTypes.USER_AVATAR_DELETE -> cleartextUserAvatarDelete(ctx, frame, caller);
+            case MessageTypes.USER_DISPLAY_NAME_SET -> cleartextUserDisplayNameSet(ctx, frame, caller, payload);
+            case MessageTypes.USER_DISPLAY_NAME_GET -> cleartextUserDisplayNameGet(ctx, frame, caller, payload);
+            case MessageTypes.USER_PROFILE_GET -> cleartextUserProfileGet(ctx, frame, caller, payload);
+            case MessageTypes.FRIEND_INFO_GET -> cleartextFriendInfoGet(ctx, frame, caller, payload);
+            case MessageTypes.FRIEND_LIST_GET -> cleartextFriendListGet(ctx, frame, caller, payload);
+            case MessageTypes.FRIEND_PENDING_LIST_GET -> cleartextFriendPendingListGet(ctx, frame, caller, payload);
+            case MessageTypes.IDENTITY_ED25519_PUBLISH -> cleartextIdentityEd25519Publish(ctx, frame, caller, payload);
+            case MessageTypes.GROUP_LIST_GET -> cleartextGroupListGet(ctx, frame, caller, payload);
+            case MessageTypes.GROUP_INFO_GET -> cleartextGroupInfoGet(ctx, frame, caller, payload);
+            case MessageTypes.ACCOUNT_DELETE -> cleartextAccountDelete(ctx, frame, caller, payload);
             default -> nativeOps.storeMessage(caller, extractImSession(payload), payload);
+        }
+    }
+
+    private void cleartextUserAvatarSet(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller, byte[] payload) {
+        byte[] uid = ctx.channel().attr(ZspChannelAttributes.AUTH_USER_ID_16).get();
+        if (uid == null || uid.length != ZspConstants.USER_ID_SIZE) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        if (payload == null || payload.length > ZspConstants.MM1_USER_AVATAR_MAX_BYTES) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        boolean ok =
+                nativeOps.storeUserData(caller, uid, ZspConstants.MM1_USER_KV_TYPE_AVATAR_V1, payload);
+        byte[] reply = new byte[] {(byte) (ok ? 1 : 0)};
+        writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.USER_AVATAR_SET, reply));
+    }
+
+    private void cleartextUserAvatarGet(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller, byte[] payload) {
+        if (payload == null || payload.length != ZspConstants.USER_ID_SIZE) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        byte[] target = Arrays.copyOf(payload, ZspConstants.USER_ID_SIZE);
+        byte[] data = nativeOps.getUserData(caller, target, ZspConstants.MM1_USER_KV_TYPE_AVATAR_V1);
+        if (data == null) {
+            data = new byte[0];
+        }
+        writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.USER_AVATAR_GET, data));
+    }
+
+    private void cleartextUserAvatarDelete(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller) {
+        byte[] uid = ctx.channel().attr(ZspChannelAttributes.AUTH_USER_ID_16).get();
+        if (uid == null || uid.length != ZspConstants.USER_ID_SIZE) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        boolean ok = nativeOps.deleteUserData(caller, uid, ZspConstants.MM1_USER_KV_TYPE_AVATAR_V1);
+        byte[] reply = new byte[] {(byte) (ok ? 1 : 0)};
+        writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.USER_AVATAR_DELETE, reply));
+    }
+
+    private void cleartextUserDisplayNameSet(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller, byte[] payload) {
+        byte[] uid = ctx.channel().attr(ZspChannelAttributes.AUTH_USER_ID_16).get();
+        if (uid == null || uid.length != ZspConstants.USER_ID_SIZE) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        byte[] data = payload == null ? new byte[0] : payload;
+        if (data.length > ZspConstants.MM1_USER_DISPLAY_NAME_MAX_BYTES) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        boolean ok =
+                nativeOps.storeUserData(caller, uid, ZspConstants.MM1_USER_KV_TYPE_DISPLAY_NAME_V1, data);
+        byte[] reply = new byte[] {(byte) (ok ? 1 : 0)};
+        writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.USER_DISPLAY_NAME_SET, reply));
+    }
+
+    private void cleartextUserDisplayNameGet(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller, byte[] payload) {
+        if (payload == null || payload.length != ZspConstants.USER_ID_SIZE) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        byte[] target = Arrays.copyOf(payload, ZspConstants.USER_ID_SIZE);
+        byte[] data = nativeOps.getUserData(caller, target, ZspConstants.MM1_USER_KV_TYPE_DISPLAY_NAME_V1);
+        if (data == null) {
+            data = new byte[0];
+        }
+        writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.USER_DISPLAY_NAME_GET, data));
+    }
+
+    private void cleartextUserProfileGet(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller, byte[] payload) {
+        Optional<byte[]> body = buildUserProfilePayload(caller, payload);
+        if (body.isEmpty()) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.USER_PROFILE_GET, body.get()));
+    }
+
+    /** 与 {@link #cleartextUserProfileGet} 相同语义，应答类型为 {@link MessageTypes#FRIEND_INFO_GET}。 */
+    private void cleartextFriendInfoGet(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller, byte[] payload) {
+        Optional<byte[]> body = buildUserProfilePayload(caller, payload);
+        if (body.isEmpty()) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.FRIEND_INFO_GET, body.get()));
+    }
+
+    /**
+     * 请求载荷须为 16B targetUserId；应答为 nickLen‖nick‖avatarLen‖avatar（与 USER_PROFILE_GET 一致）。
+     */
+    private Optional<byte[]> buildUserProfilePayload(byte[] caller, byte[] payload) {
+        if (payload == null || payload.length != ZspConstants.USER_ID_SIZE) {
+            return Optional.empty();
+        }
+        byte[] target = Arrays.copyOf(payload, ZspConstants.USER_ID_SIZE);
+        byte[] nick = nativeOps.getUserData(caller, target, ZspConstants.MM1_USER_KV_TYPE_DISPLAY_NAME_V1);
+        byte[] avatar = nativeOps.getUserData(caller, target, ZspConstants.MM1_USER_KV_TYPE_AVATAR_V1);
+        if (nick == null) {
+            nick = new byte[0];
+        }
+        if (avatar == null) {
+            avatar = new byte[0];
+        }
+        if (nick.length > ZspConstants.MM1_USER_DISPLAY_NAME_MAX_BYTES) {
+            nick = Arrays.copyOf(nick, ZspConstants.MM1_USER_DISPLAY_NAME_MAX_BYTES);
+        }
+        int maxAvatar = ZspConstants.MAX_PAYLOAD_LENGTH_U16 - 4 - nick.length;
+        if (maxAvatar < 0) {
+            nick = new byte[0];
+            maxAvatar = ZspConstants.MAX_PAYLOAD_LENGTH_U16 - 4;
+        }
+        if (avatar.length > maxAvatar) {
+            avatar = Arrays.copyOf(avatar, maxAvatar);
+        }
+        ByteBuffer buf = ByteBuffer.allocate(2 + nick.length + 2 + avatar.length).order(ByteOrder.BIG_ENDIAN);
+        buf.putShort((short) nick.length);
+        buf.put(nick);
+        buf.putShort((short) avatar.length);
+        buf.put(avatar);
+        return Optional.of(buf.array());
+    }
+
+    /** 请求载荷为空；应答 count(u32 BE) ‖ count×friendUserId(16)。 */
+    private void cleartextIdentityEd25519Publish(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller, byte[] payload) {
+        byte[] uid = ctx.channel().attr(ZspChannelAttributes.AUTH_USER_ID_16).get();
+        if (uid == null || uid.length != ZspConstants.USER_ID_SIZE) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        if (payload == null || payload.length != ZspConstants.ED25519_PUBLIC_KEY_SIZE) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        boolean ok =
+                nativeOps.storeUserData(caller, uid, ZspConstants.MM1_USER_KV_TYPE_ED25519_PUBKEY_V1, payload);
+        byte[] reply = new byte[] {(byte) (ok ? 1 : 0)};
+        writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.IDENTITY_ED25519_PUBLISH, reply));
+    }
+
+    /** 请求载荷为空；应答 count(u32 BE) ‖ count×(requestId(16)‖from(16)‖createdSec(u64 BE))。 */
+    private void cleartextFriendPendingListGet(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller, byte[] payload) {
+        if (payload != null && payload.length > 0) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        byte[] uid = ctx.channel().attr(ZspChannelAttributes.AUTH_USER_ID_16).get();
+        if (uid == null || uid.length != ZspConstants.USER_ID_SIZE) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        byte[][] rows = nativeOps.listPendingFriendRequests(caller, uid);
+        if (rows == null) {
+            rows = new byte[0][];
+        }
+        int rowBytes = ZspConstants.USER_ID_SIZE + ZspConstants.USER_ID_SIZE + 8;
+        int n = 0;
+        for (byte[] row : rows) {
+            if (row != null && row.length == rowBytes) {
+                n++;
+            }
+        }
+        ByteBuffer buf = ByteBuffer.allocate(4 + n * rowBytes).order(ByteOrder.BIG_ENDIAN);
+        buf.putInt(n);
+        for (byte[] row : rows) {
+            if (row != null && row.length == rowBytes) {
+                buf.put(row);
+            }
+        }
+        writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.FRIEND_PENDING_LIST_GET, buf.array()));
+    }
+
+    private void cleartextFriendListGet(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller, byte[] payload) {
+        if (payload != null && payload.length > 0) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        byte[] uid = ctx.channel().attr(ZspChannelAttributes.AUTH_USER_ID_16).get();
+        if (uid == null || uid.length != ZspConstants.USER_ID_SIZE) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        byte[][] friends = nativeOps.getFriends(caller, uid);
+        if (friends == null) {
+            friends = new byte[0][];
+        }
+        int n = 0;
+        for (byte[] f : friends) {
+            if (f != null && f.length == ZspConstants.USER_ID_SIZE) {
+                n++;
+            }
+        }
+        ByteBuffer buf =
+                ByteBuffer.allocate(4 + n * ZspConstants.USER_ID_SIZE).order(ByteOrder.BIG_ENDIAN);
+        buf.putInt(n);
+        for (byte[] f : friends) {
+            if (f != null && f.length == ZspConstants.USER_ID_SIZE) {
+                buf.put(f);
+            }
+        }
+        writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.FRIEND_LIST_GET, buf.array()));
+    }
+
+    /** 请求载荷为空；应答 count(u32 BE) ‖ count×groupId(16)。底层未实现枚举时 count=0。 */
+    private void cleartextGroupListGet(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller, byte[] payload) {
+        if (payload != null && payload.length > 0) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        byte[] uid = ctx.channel().attr(ZspChannelAttributes.AUTH_USER_ID_16).get();
+        if (uid == null || uid.length != ZspConstants.USER_ID_SIZE) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        byte[][] gids = nativeOps.listGroupIdsForUser(caller, uid);
+        if (gids == null) {
+            gids = new byte[0][];
+        }
+        int n = 0;
+        for (byte[] g : gids) {
+            if (g != null && g.length == ZspConstants.USER_ID_SIZE) {
+                n++;
+            }
+        }
+        ByteBuffer buf =
+                ByteBuffer.allocate(4 + n * ZspConstants.USER_ID_SIZE).order(ByteOrder.BIG_ENDIAN);
+        buf.putInt(n);
+        for (byte[] g : gids) {
+            if (g != null && g.length == ZspConstants.USER_ID_SIZE) {
+                buf.put(g);
+            }
+        }
+        writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.GROUP_LIST_GET, buf.array()));
+    }
+
+    /** 请求 groupId(16)；应答 nameLen‖name UTF-8‖memberCount‖members×16B。 */
+    private void cleartextGroupInfoGet(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller, byte[] payload) {
+        if (payload == null || payload.length != ZspConstants.USER_ID_SIZE) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        byte[] gid = Arrays.copyOf(payload, ZspConstants.USER_ID_SIZE);
+        String name = nativeOps.getGroupName(caller, gid);
+        if (name == null) {
+            name = "";
+        }
+        byte[] nameBytes = name.getBytes(StandardCharsets.UTF_8);
+        if (nameBytes.length > 65535) {
+            nameBytes = Arrays.copyOf(nameBytes, 65535);
+        }
+        byte[][] members = nativeOps.getGroupMembers(caller, gid);
+        if (members == null) {
+            members = new byte[0][];
+        }
+        int m = 0;
+        for (byte[] u : members) {
+            if (u != null && u.length == ZspConstants.USER_ID_SIZE) {
+                m++;
+            }
+        }
+        ByteBuffer buf =
+                ByteBuffer.allocate(2 + nameBytes.length + 4 + m * ZspConstants.USER_ID_SIZE)
+                        .order(ByteOrder.BIG_ENDIAN);
+        buf.putShort((short) nameBytes.length);
+        buf.put(nameBytes);
+        buf.putInt(m);
+        for (byte[] u : members) {
+            if (u != null && u.length == ZspConstants.USER_ID_SIZE) {
+                buf.put(u);
+            }
+        }
+        writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.GROUP_INFO_GET, buf.array()));
+    }
+
+    private void cleartextAccountDelete(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller, byte[] payload) {
+        byte[] uid = ctx.channel().attr(ZspChannelAttributes.AUTH_USER_ID_16).get();
+        if (uid == null || uid.length != ZspConstants.USER_ID_SIZE) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        if (payload == null || payload.length != 32) {
+            closeMetricOnly(ctx, "cleartext_invalid");
+            return;
+        }
+        byte[] token = Arrays.copyOf(payload, 32);
+        boolean ok = nativeOps.deleteAccount(caller, uid, token, token);
+        byte[] reply = new byte[] {(byte) (ok ? 1 : 0)};
+        ChannelFuture f = writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.ACCOUNT_DELETE, reply));
+        if (ok) {
+            f.addListener(future -> handleLogout(ctx));
         }
     }
 
@@ -260,6 +639,9 @@ public final class ZspMessageDispatcher {
         byte[] msgId = nativeOps.storeMessage(caller, im, body);
         if (msgId != null && msgId.length > 0) {
             maybeForwardCleartext(ctx, frame, payload, im);
+            writeFrame(ctx, outbound.replySameFlags(ctx, frame, frame.header().messageType(), msgId));
+        } else {
+            writeFrame(ctx, outbound.replySameFlags(ctx, frame, frame.header().messageType(), new byte[0]));
         }
     }
 
@@ -286,7 +668,7 @@ public final class ZspMessageDispatcher {
         nativeOps.markMessageRead(caller, m.get().messageId16(), ts);
         if (type == MessageTypes.ACK) {
             ZspFrame ack = outbound.replySameFlags(ctx, frame, MessageTypes.ACK, new byte[0]);
-            ctx.writeAndFlush(ack);
+            writeFrame(ctx, ack);
         }
     }
 
@@ -328,7 +710,7 @@ public final class ZspMessageDispatcher {
         }
         byte[] packed = packSessionRows(rows);
         ZspFrame out = outbound.replySameFlags(ctx, frame, MessageTypes.SYNC, packed);
-        ctx.writeAndFlush(out);
+        writeFrame(ctx, out);
     }
 
     private static byte[] packSessionRows(byte[][] rows) {
@@ -427,7 +809,7 @@ public final class ZspMessageDispatcher {
         byte[] callId = nativeOps.rtcStartCall(caller, peer, kind);
         if (callId != null && callId.length > 0) {
             ZspFrame out = outbound.replySameFlags(ctx, frame, frame.header().messageType(), callId);
-            ctx.writeAndFlush(out);
+            writeFrame(ctx, out);
         }
     }
 
@@ -468,7 +850,9 @@ public final class ZspMessageDispatcher {
         buf.get(sig);
         byte[] req = nativeOps.sendFriendRequest(caller, from, to, ts, sig);
         if (req != null && req.length > 0) {
-            ctx.writeAndFlush(outbound.replySameFlags(ctx, frame, MessageTypes.FRIEND_REQUEST, req));
+            writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.FRIEND_REQUEST, req));
+        } else {
+            writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.FRIEND_REQUEST, new byte[0]));
         }
     }
 
@@ -486,7 +870,9 @@ public final class ZspMessageDispatcher {
         long ts = buf.getLong();
         byte[] sig = new byte[64];
         buf.get(sig);
-        nativeOps.respondFriendRequest(caller, reqId, acc, resp, ts, sig);
+        boolean ok = nativeOps.respondFriendRequest(caller, reqId, acc, resp, ts, sig);
+        byte[] reply = new byte[] {(byte) (ok ? 1 : 0)};
+        writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.FRIEND_RESPONSE, reply));
     }
 
     private void cleartextDeleteFriend(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller, byte[] p) {
@@ -502,7 +888,9 @@ public final class ZspMessageDispatcher {
         long ts = buf.getLong();
         byte[] sig = new byte[64];
         buf.get(sig);
-        nativeOps.deleteFriend(caller, user, friend, ts, sig);
+        boolean ok = nativeOps.deleteFriend(caller, user, friend, ts, sig);
+        byte[] reply = new byte[] {(byte) (ok ? 1 : 0)};
+        writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.DELETE_FRIEND, reply));
     }
 
     private void cleartextFriendNote(ChannelHandlerContext ctx, ZspFrame frame, byte[] caller, byte[] p) {
@@ -522,7 +910,7 @@ public final class ZspMessageDispatcher {
         }
         byte[] gid = nativeOps.createGroup(caller, creator, name.get());
         if (gid != null && gid.length > 0) {
-            ctx.writeAndFlush(outbound.replySameFlags(ctx, frame, MessageTypes.GROUP_CREATE, gid));
+            writeFrame(ctx, outbound.replySameFlags(ctx, frame, MessageTypes.GROUP_CREATE, gid));
         }
     }
 
@@ -595,7 +983,7 @@ public final class ZspMessageDispatcher {
         }
         ZspFrame out =
                 outbound.replySameFlags(dst, request, request.header().messageType(), request.payload());
-        dst.writeAndFlush(out);
+        writeFrame(dst, out);
         if (metrics != null) {
             metrics.recordForwardDelivered();
         }
@@ -605,6 +993,7 @@ public final class ZspMessageDispatcher {
         if (metrics != null) {
             metrics.recordClose(code);
         }
+        logInboundEvent(level, code, ctx);
         ZspGatewayLog.diag(LOG, properties, level, code);
         ctx.close();
     }
@@ -613,8 +1002,62 @@ public final class ZspMessageDispatcher {
         if (metrics != null) {
             metrics.recordClose(code);
         }
+        logInboundEvent(Level.INFO, code, ctx);
         ctx.close();
     }
+
+    /** 与 {@link ZspServerProperties#isLogInboundEvents()} 对齐；不含业务载荷。 */
+    private void logInboundEvent(Level level, String code, ChannelHandlerContext ctx) {
+        if (properties == null || !properties.isLogInboundEvents()) {
+            return;
+        }
+        LOG.log(level, "[zsp] {0} peer={1}", new Object[] {code, String.valueOf(ctx.channel().remoteAddress())});
+    }
+
+    private static Optional<LocalRegisterPayload> parseLocalRegisterPayload(byte[] p) {
+        if (p == null || p.length < 16 + 2 + 2) {
+            return Optional.empty();
+        }
+        ByteBuffer buf = ByteBuffer.wrap(p).order(ByteOrder.BIG_ENDIAN);
+        byte[] uid = new byte[ZspConstants.USER_ID_SIZE];
+        buf.get(uid);
+        int pwLen = buf.getShort() & 0xFFFF;
+        if (pwLen < 8 || pwLen > 512 || buf.remaining() < pwLen + 2) {
+            return Optional.empty();
+        }
+        byte[] pw = new byte[pwLen];
+        buf.get(pw);
+        int recLen = buf.getShort() & 0xFFFF;
+        if (recLen < 32 || recLen > 8192 || buf.remaining() < recLen) {
+            return Optional.empty();
+        }
+        byte[] rec = new byte[recLen];
+        buf.get(rec);
+        if (buf.hasRemaining()) {
+            return Optional.empty();
+        }
+        return Optional.of(new LocalRegisterPayload(uid, pw, rec));
+    }
+
+    private static Optional<LocalPasswordPayload> parseLocalPasswordPayload(byte[] p) {
+        if (p == null || p.length < 16 + 2) {
+            return Optional.empty();
+        }
+        ByteBuffer buf = ByteBuffer.wrap(p).order(ByteOrder.BIG_ENDIAN);
+        byte[] uid = new byte[ZspConstants.USER_ID_SIZE];
+        buf.get(uid);
+        int pwLen = buf.getShort() & 0xFFFF;
+        if (pwLen < 8 || pwLen > 512 || buf.remaining() != pwLen) {
+            return Optional.empty();
+        }
+        byte[] pw = new byte[pwLen];
+        buf.get(pw);
+        return Optional.of(new LocalPasswordPayload(uid, pw));
+    }
+
+    private record LocalRegisterPayload(byte[] userId, byte[] password, byte[] recovery) {}
+
+    private record LocalPasswordPayload(byte[] userId, byte[] password) {}
 
     private static byte[] remoteIpBytes(ChannelHandlerContext ctx) {
         if (!(ctx.channel().remoteAddress() instanceof java.net.InetSocketAddress inet)) {

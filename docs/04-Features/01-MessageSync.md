@@ -51,3 +51,15 @@ MM2: 存储层（当前实现）
 
 - **产品目标**：热缓存/LRU、全局 7 天等见 **`docs/AUTHORITY.md`**、**`04-Features/README.md`**（**与当前 MM2 RAM IM 分离**）
 - **磁盘容量**：受 **`ZDB_FILE_SIZE`、卷数、`ZDB_MAX_WRITE_SIZE`** 约束，见 **`03-Storage.md`** / **`04-ZdbBinaryLayout.md`**
+
+## 七、Android 参考客户端（ZChat）
+
+仓库内 **`Client/Android`** 使用 ZSP **`SYNC`** 与 **`MESSAGE_TEXT`** 拉取/接收明文单聊，**不经过** ZChatIM MM2 落盘路径；本地用 **SQLite**（`ChatMessageDb`）做去重与展示。
+
+**要点**（与 MM2 内存链式同步语义对照）：
+
+- 服务端对会话内消息按 **`after messageId`** 顺序返回增量；消息 **ID 为随机 16 字节**，**不能**用本地插入时间 `ts_ms` 代替「链上最后一条」作为 SYNC 游标。
+- 客户端使用 **行自增 `id`** 推导「当前最后/最早一条」的 `messageId`，并配合 **首窗合并、尾部多轮、最早缺口前向补齐** 等策略，减少漏消息与重复轮询带来的滞后。
+- 与 **`__ZRTC1__`** 语音信令相关的 **SYNC 重放** 与 **实时 TEXT** 分发顺序，见 **[14-Android-Client-ZChat.md](14-Android-Client-ZChat.md)**。
+
+构建与目录说明见 **`Client/Android/README.md`**。

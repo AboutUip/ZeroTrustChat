@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bottom_nav_ripple">#33AAB8FF</color>
+
+    <color name="chat_input_bar_bg">#121212</color>
+    <color name="chat_input_field_bg">#2B2B2B</color>
+</resources>
